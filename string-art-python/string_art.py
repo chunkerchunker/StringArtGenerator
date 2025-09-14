@@ -69,16 +69,14 @@ def bresenham_line(x0: int, y0: int, x1: int, y1: int) -> Tuple[np.ndarray, np.n
     return x_coords[:idx], y_coords[:idx]
 
 
-def precalculate_lines(pin_coords: np.ndarray, pins: int):
-    """Precalculate all potential lines between pins."""
-    # Store line data in a dictionary for efficient lookup
-    line_cache = {}
+@jit(nopython=True)
+def precalculate_lines_fast(pin_coords: np.ndarray, pins: int, max_line_length: int):
+    """JIT-compiled line precalculation for better performance."""
+    line_coords_x = np.full((pins, pins, max_line_length), -1, dtype=np.int32)
+    line_coords_y = np.full((pins, pins, max_line_length), -1, dtype=np.int32)
+    line_lengths = np.zeros((pins, pins), dtype=np.int32)
 
-    print("Precalculating potential lines...")
     for i in range(pins):
-        if i % 50 == 0:
-            print(f"  Processing pin {i}/{pins}")
-
         for j in range(i + MIN_DISTANCE, pins):
             x0 = int(pin_coords[i, 0])
             y0 = int(pin_coords[i, 1])
@@ -86,24 +84,51 @@ def precalculate_lines(pin_coords: np.ndarray, pins: int):
             y1 = int(pin_coords[j, 1])
 
             xs, ys = bresenham_line(x0, y0, x1, y1)
+            length = len(xs)
 
-            # Store both directions
-            line_cache[(i, j)] = (xs, ys)
-            line_cache[(j, i)] = (xs, ys)
+            # Store coordinates for both directions
+            line_coords_x[i, j, :length] = xs
+            line_coords_y[i, j, :length] = ys
+            line_coords_x[j, i, :length] = xs
+            line_coords_y[j, i, :length] = ys
+            line_lengths[i, j] = length
+            line_lengths[j, i] = length
 
-    return line_cache
+    return line_coords_x, line_coords_y, line_lengths
+
+
+def precalculate_lines(pin_coords: np.ndarray, pins: int):
+    """Precalculate all potential lines between pins using optimized JIT function."""
+    print("Precalculating potential lines...")
+
+    # Conservative estimate for maximum line length
+    max_line_length = int(np.sqrt(2) * 1000) + 10
+
+    # Use JIT-compiled function for the heavy lifting
+    line_coords_x, line_coords_y, line_lengths = precalculate_lines_fast(
+        pin_coords, pins, max_line_length
+    )
+
+    return line_coords_x, line_coords_y, line_lengths
 
 
 @jit(nopython=True)
-def get_line_error(
-    error_img: np.ndarray, x_coords: np.ndarray, y_coords: np.ndarray, img_size: int
+def get_line_error_fast(
+    error_img: np.ndarray,
+    line_coords_x: np.ndarray,
+    line_coords_y: np.ndarray,
+    from_pin: int,
+    to_pin: int,
+    line_length: int,
+    img_size: int,
 ) -> float:
-    """Calculate the error reduction for a line."""
+    """Calculate the error reduction for a line using precomputed coordinates."""
     total_error = 0.0
     valid_points = 0
 
-    for i in range(len(x_coords)):
-        x, y = x_coords[i], y_coords[i]
+    for i in range(line_length):
+        x = line_coords_x[from_pin, to_pin, i]
+        y = line_coords_y[from_pin, to_pin, i]
         if 0 <= x < img_size and 0 <= y < img_size:
             total_error += error_img[y, x]
             valid_points += 1
@@ -112,27 +137,131 @@ def get_line_error(
 
 
 @jit(nopython=True)
-def apply_line_to_error(
+def apply_line_to_error_fast(
     error_img: np.ndarray,
-    x_coords: np.ndarray,
-    y_coords: np.ndarray,
+    line_coords_x: np.ndarray,
+    line_coords_y: np.ndarray,
+    from_pin: int,
+    to_pin: int,
+    line_length: int,
     line_weight: int,
     img_size: int,
 ):
-    """Apply a line to the error image."""
-    for i in range(len(x_coords)):
-        x, y = x_coords[i], y_coords[i]
+    """Apply a line to the error image using precomputed coordinates."""
+    for i in range(line_length):
+        x = line_coords_x[from_pin, to_pin, i]
+        y = line_coords_y[from_pin, to_pin, i]
         if 0 <= x < img_size and 0 <= y < img_size:
             error_img[y, x] -= line_weight
 
 
 @jit(nopython=True)
-def contains_recent_pin(last_pins: np.ndarray, pin: int) -> bool:
-    """Check if a pin was used recently."""
-    for i in range(len(last_pins)):
-        if last_pins[i] == pin:
-            return True
-    return False
+def calculate_lines_fast(
+    error_img: np.ndarray,
+    line_coords_x: np.ndarray,
+    line_coords_y: np.ndarray,
+    line_lengths: np.ndarray,
+    pins: int,
+    max_lines: int,
+    line_weight: int,
+    img_size: int,
+) -> np.ndarray:
+    """JIT-compiled version of the line calculation algorithm."""
+    line_sequence = np.zeros(max_lines + 1, dtype=np.int32)
+    line_sequence[0] = 0  # Start from pin 0
+    sequence_length = 1
+
+    current_pin = 0
+    last_pins = np.full(20, -1, dtype=np.int32)
+    last_pin_idx = 0
+
+    for line_idx in range(max_lines):
+        best_pin = -1
+        max_error = 0.0
+
+        # Try all possible pins
+        for offset in range(MIN_DISTANCE, pins - MIN_DISTANCE):
+            test_pin = (current_pin + offset) % pins
+
+            # Skip if recently used
+            recently_used = False
+            for j in range(20):
+                if last_pins[j] == test_pin:
+                    recently_used = True
+                    break
+            if recently_used:
+                continue
+
+            # Skip if no line exists
+            length = line_lengths[current_pin, test_pin]
+            if length == 0:
+                continue
+
+            # Calculate error reduction
+            line_error = get_line_error_fast(
+                error_img,
+                line_coords_x,
+                line_coords_y,
+                current_pin,
+                test_pin,
+                length,
+                img_size,
+            )
+
+            if line_error > max_error:
+                max_error = line_error
+                best_pin = test_pin
+
+        if best_pin == -1:
+            break
+
+        # Add best pin to sequence
+        line_sequence[sequence_length] = best_pin
+        sequence_length += 1
+
+        # Apply line to error image
+        length = line_lengths[current_pin, best_pin]
+        apply_line_to_error_fast(
+            error_img,
+            line_coords_x,
+            line_coords_y,
+            current_pin,
+            best_pin,
+            length,
+            line_weight,
+            img_size,
+        )
+
+        # Update recent pins tracking
+        last_pins[last_pin_idx] = best_pin
+        last_pin_idx = (last_pin_idx + 1) % 20
+        current_pin = best_pin
+
+    return line_sequence[:sequence_length]
+
+
+def warmup_jit_functions():
+    """Warm up JIT-compiled functions to avoid compilation overhead during processing."""
+    # Create minimal dummy data to trigger compilation
+    dummy_coords = np.array([[5, 5], [10, 10]], dtype=np.float64)
+    dummy_error = np.ones((15, 15), dtype=np.float64)
+    dummy_line_coords_x = np.zeros((2, 2, 10), dtype=np.int32)
+    dummy_line_coords_y = np.zeros((2, 2, 10), dtype=np.int32)
+    dummy_lengths = np.array([[0, 5], [5, 0]], dtype=np.int32)
+
+    # Trigger JIT compilation with minimal data
+    calculate_pin_coords(2, 15)
+    precalculate_lines_fast(dummy_coords, 2, 10)
+    calculate_lines_fast(
+        dummy_error,
+        dummy_line_coords_x,
+        dummy_line_coords_y,
+        dummy_lengths,
+        2,
+        2,
+        1,
+        15,
+    )
 
 
 class StringArtGenerator:
@@ -153,7 +282,9 @@ class StringArtGenerator:
         self.output_weight = output_weight or line_weight
 
         self.pin_coords = None
-        self.line_cache = None
+        self.line_coords_x = None
+        self.line_coords_y = None
+        self.line_lengths = None
 
     def load_and_process_image(self, filename: str) -> np.ndarray:
         """Load and process input image."""
@@ -185,66 +316,26 @@ class StringArtGenerator:
         return luminance
 
     def calculate_lines(self, source_image: np.ndarray) -> List[int]:
-        """Calculate the optimal sequence of lines."""
+        """Calculate the optimal sequence of lines using optimized JIT functions."""
         print("Calculating string art lines...")
 
         # Initialize error image (inverted)
         error = 255.0 - source_image
 
-        # Initialize line sequence
-        line_sequence = [0]  # Start from pin 0
-        current_pin = 0
-        last_pins = np.full(20, -1, dtype=np.int32)  # Track recent pins
-        last_pin_idx = 0
-
-        for i in range(self.max_lines):
-            if i % 100 == 0:
-                print(f"  Processing line {i}/{self.max_lines}")
-
-            best_pin = -1
-            max_error = 0.0
-            best_x_coords = None
-            best_y_coords = None
-
-            # Try all possible pins
-            for offset in range(MIN_DISTANCE, self.pins - MIN_DISTANCE):
-                test_pin = (current_pin + offset) % self.pins
-
-                # Skip if recently used
-                if contains_recent_pin(last_pins, test_pin):
-                    continue
-
-                # Get line coordinates
-                x_coords, y_coords = self.line_cache[(current_pin, test_pin)]
-
-                # Calculate error reduction
-                line_error = get_line_error(error, x_coords, y_coords, self.target_size)
-
-                if line_error > max_error:
-                    max_error = line_error
-                    best_pin = test_pin
-                    best_x_coords = x_coords
-                    best_y_coords = y_coords
-
-            if best_pin == -1:
-                # No valid pin found
-                break
-
-            # Add best pin to sequence
-            line_sequence.append(best_pin)
-
-            # Apply line to error image
-            apply_line_to_error(
-                error, best_x_coords, best_y_coords, self.line_weight, self.target_size
-            )
-
-            # Update recent pins tracking
-            last_pins[last_pin_idx] = best_pin
-            last_pin_idx = (last_pin_idx + 1) % len(last_pins)
-            current_pin = best_pin
+        # Use the fast JIT-compiled algorithm
+        line_sequence_array = calculate_lines_fast(
+            error,
+            self.line_coords_x,
+            self.line_coords_y,
+            self.line_lengths,
+            self.pins,
+            self.max_lines,
+            self.line_weight,
+            self.target_size,
+        )
 
         print()
-        return line_sequence
+        return line_sequence_array.tolist()
 
     def generate_output_image(self, line_sequence: List[int], output_file: str):
         """Generate the final string art image with anti-aliased lines using aggdraw."""
@@ -281,24 +372,42 @@ class StringArtGenerator:
             y = int(coord[1] * scale)
             canvas.ellipse((x - 2, y - 2, x + 2, y + 2), circle_pen, pin_brush)
 
-        # Draw anti-aliased lines
+        # Draw anti-aliased lines in batches for better performance
         print(f"  Drawing {len(line_sequence) - 1} anti-aliased lines...")
-        for i in range(len(line_sequence) - 1):
-            if i % 1000 == 0 and i > 0:
-                print(f"    Drawing line {i}/{len(line_sequence) - 1}")
 
+        # Pre-compute all line coordinates to reduce per-line overhead
+        num_lines = len(line_sequence) - 1
+        line_coords = np.zeros((num_lines, 4), dtype=np.int32)
+
+        for i in range(num_lines):
             from_pin = line_sequence[i]
             to_pin = line_sequence[i + 1]
 
             from_coord = self.pin_coords[from_pin]
             to_coord = self.pin_coords[to_pin]
 
-            x0 = int(from_coord[0] * scale)
-            y0 = int(from_coord[1] * scale)
-            x1 = int(to_coord[0] * scale)
-            y1 = int(to_coord[1] * scale)
+            line_coords[i, 0] = int(from_coord[0] * scale)  # x0
+            line_coords[i, 1] = int(from_coord[1] * scale)  # y0
+            line_coords[i, 2] = int(to_coord[0] * scale)  # x1
+            line_coords[i, 3] = int(to_coord[1] * scale)  # y1
 
-            canvas.line((x0, y0, x1, y1), line_pen)
+        # Draw all lines in batches to reduce overhead
+        batch_size = 5000
+        for batch_start in range(0, num_lines, batch_size):
+            batch_end = min(batch_start + batch_size, num_lines)
+            if batch_start > 0:
+                print(f"    Drawing lines {batch_start}-{batch_end}/{num_lines}")
+
+            for i in range(batch_start, batch_end):
+                canvas.line(
+                    (
+                        line_coords[i, 0],
+                        line_coords[i, 1],
+                        line_coords[i, 2],
+                        line_coords[i, 3],
+                    ),
+                    line_pen,
+                )
 
         # Flush the canvas to apply all drawing operations
         canvas.flush()
@@ -316,6 +425,10 @@ class StringArtGenerator:
             f"  Output size: {self.output_size}, Line weight: {self.line_weight}, Output weight: {self.output_weight}"
         )
 
+        # Warm up JIT functions to avoid compilation overhead during timing
+        print("Warming up JIT functions...")
+        warmup_jit_functions()
+
         # Load and process image
         source_image = self.load_and_process_image(input_file)
 
@@ -325,7 +438,9 @@ class StringArtGenerator:
         self.pin_coords = calculate_pin_coords(self.pins, self.target_size)
 
         # Precalculate lines
-        self.line_cache = precalculate_lines(self.pin_coords, self.pins)
+        self.line_coords_x, self.line_coords_y, self.line_lengths = precalculate_lines(
+            self.pin_coords, self.pins
+        )
 
         # Calculate optimal line sequence
         line_sequence = self.calculate_lines(source_image)
