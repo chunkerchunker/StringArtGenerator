@@ -29,9 +29,8 @@ type Coord struct {
 	Y float64
 }
 
-const MIN_DISTANCE = 30
-
 // These will be set from command-line flags or defaults
+var MIN_DISTANCE = 30
 var PINS = 300
 var MAX_LINES = 4000
 var TARGET_SIZE = 500
@@ -66,6 +65,7 @@ func main() {
 	outputSizeFlag := flag.Int("output-size", 0, "Output image size in pixels (default: same as processing size)")
 	lineWeightFlag := flag.Int("weight", 8, "Line weight for darkness calculation (default: 8, higher = darker)")
 	outputWeightFlag := flag.Int("output-weight", 0, "Visual line opacity for output image (default: same as weight, 0-255)")
+	minDistanceFlag := flag.Int("min-distance", 30, "Minimum distance between connected pins (default: 30)")
 	flag.Parse()
 
 	if *inputFile == "" {
@@ -85,9 +85,10 @@ func main() {
 	if OUTPUT_WEIGHT == 0 {
 		OUTPUT_WEIGHT = LINE_WEIGHT
 	}
+	MIN_DISTANCE = *minDistanceFlag
 
 	fmt.Printf("Processing %s...\n", *inputFile)
-	fmt.Printf("  Pins: %d, Max lines: %d, Processing size: %d, Output size: %d, Line weight: %d, Output weight: %d\n", PINS, MAX_LINES, TARGET_SIZE, OUTPUT_SIZE, LINE_WEIGHT, OUTPUT_WEIGHT)
+	fmt.Printf("  Pins: %d, Max lines: %d, Processing size: %d, Output size: %d, Line weight: %d, Output weight: %d, Min distance: %d\n", PINS, MAX_LINES, TARGET_SIZE, OUTPUT_SIZE, LINE_WEIGHT, OUTPUT_WEIGHT, MIN_DISTANCE)
 	SourceImage = importPictureAndGetPixelArray(*inputFile)
 
 	startTime := time.Now()
