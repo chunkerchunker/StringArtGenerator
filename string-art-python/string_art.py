@@ -133,7 +133,7 @@ def get_line_error_fast(
             total_error += error_img[y, x]
             valid_points += 1
 
-    return total_error / valid_points if valid_points > 0 else 0.0
+    return total_error / valid_points if valid_points > 0 else 0.0  # type: ignore
 
 
 @jit(nopython=True)
