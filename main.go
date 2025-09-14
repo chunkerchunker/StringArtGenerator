@@ -35,7 +35,9 @@ const MIN_DISTANCE = 30
 var PINS = 300
 var MAX_LINES = 4000
 var TARGET_SIZE = 500
+var OUTPUT_SIZE = 500
 var LINE_WEIGHT = 8
+var OUTPUT_WEIGHT = 8
 
 // These are calculated based on actual image size
 var IMG_SIZE = 500
@@ -60,8 +62,10 @@ func main() {
 	outputFile := flag.String("output", "output.png", "Output image file")
 	pinsFlag := flag.Int("pins", 300, "Number of pins around the circle (default: 300)")
 	maxLinesFlag := flag.Int("lines", 4000, "Maximum number of lines to draw (default: 4000)")
-	targetSizeFlag := flag.Int("size", 500, "Target image size in pixels (default: 500)")
+	targetSizeFlag := flag.Int("size", 500, "Processing size for input image in pixels (default: 500)")
+	outputSizeFlag := flag.Int("output-size", 0, "Output image size in pixels (default: same as processing size)")
 	lineWeightFlag := flag.Int("weight", 8, "Line weight for darkness calculation (default: 8, higher = darker)")
+	outputWeightFlag := flag.Int("output-weight", 0, "Visual line opacity for output image (default: same as weight, 0-255)")
 	flag.Parse()
 
 	if *inputFile == "" {
@@ -72,10 +76,18 @@ func main() {
 	PINS = *pinsFlag
 	MAX_LINES = *maxLinesFlag
 	TARGET_SIZE = *targetSizeFlag
+	OUTPUT_SIZE = *outputSizeFlag
+	if OUTPUT_SIZE == 0 {
+		OUTPUT_SIZE = TARGET_SIZE
+	}
 	LINE_WEIGHT = *lineWeightFlag
+	OUTPUT_WEIGHT = *outputWeightFlag
+	if OUTPUT_WEIGHT == 0 {
+		OUTPUT_WEIGHT = LINE_WEIGHT
+	}
 
 	fmt.Printf("Processing %s...\n", *inputFile)
-	fmt.Printf("  Pins: %d, Max lines: %d, Target size: %d, Line weight: %d\n", PINS, MAX_LINES, TARGET_SIZE, LINE_WEIGHT)
+	fmt.Printf("  Pins: %d, Max lines: %d, Processing size: %d, Output size: %d, Line weight: %d, Output weight: %d\n", PINS, MAX_LINES, TARGET_SIZE, OUTPUT_SIZE, LINE_WEIGHT, OUTPUT_WEIGHT)
 	SourceImage = importPictureAndGetPixelArray(*inputFile)
 
 	startTime := time.Now()
@@ -289,27 +301,40 @@ func contains(arr []int, num int) bool {
 }
 
 func generateOutputImage(lineSequence []int, outputFile string) {
-	// Create a new white image
-	img := image.NewRGBA(image.Rect(0, 0, IMG_SIZE, IMG_SIZE))
-	for y := 0; y < IMG_SIZE; y++ {
-		for x := 0; x < IMG_SIZE; x++ {
+	// Create a new white image with OUTPUT_SIZE
+	img := image.NewRGBA(image.Rect(0, 0, OUTPUT_SIZE, OUTPUT_SIZE))
+	for y := 0; y < OUTPUT_SIZE; y++ {
+		for x := 0; x < OUTPUT_SIZE; x++ {
 			img.Set(x, y, color.White)
 		}
 	}
 
-	// Draw the circle border
-	drawCircle(img, IMG_SIZE/2, IMG_SIZE/2, IMG_SIZE/2-1, color.Black)
+	// Calculate scale factor for coordinates
+	scale := float64(OUTPUT_SIZE) / float64(IMG_SIZE)
 
-	// Draw the pins
+	// Draw the circle border
+	centerOut := OUTPUT_SIZE / 2
+	radiusOut := OUTPUT_SIZE/2 - 1
+	drawCircle(img, centerOut, centerOut, radiusOut, color.Black)
+
+	// Draw the pins (scaled)
 	for _, coord := range Pin_coords {
-		drawFilledCircle(img, int(coord.X), int(coord.Y), 2, color.Black)
+		scaledX := int(coord.X * scale)
+		scaledY := int(coord.Y * scale)
+		drawFilledCircle(img, scaledX, scaledY, 2, color.Black)
 	}
 
-	// Draw the lines
+	// Draw the lines (scaled)
 	for i := 0; i < len(lineSequence)-1; i++ {
 		from := Pin_coords[lineSequence[i]]
 		to := Pin_coords[lineSequence[i+1]]
-		drawLine(img, int(from.X), int(from.Y), int(to.X), int(to.Y), color.RGBA{0, 0, 0, uint8(LINE_WEIGHT)})
+
+		scaledFromX := int(from.X * scale)
+		scaledFromY := int(from.Y * scale)
+		scaledToX := int(to.X * scale)
+		scaledToY := int(to.Y * scale)
+
+		drawLine(img, scaledFromX, scaledFromY, scaledToX, scaledToY, color.RGBA{0, 0, 0, uint8(OUTPUT_WEIGHT)})
 	}
 
 	// Save the image
