@@ -2,10 +2,44 @@
 stringart
 stringart-c
 stringart-fast
+*.wasm
 
+# Created by https://www.toptal.com/developers/gitignore/api/go,emacs,macos,python,visualstudiocode,c++
+# Edit at https://www.toptal.com/developers/gitignore?templates=go,emacs,macos,python,visualstudiocode,c++
 
-# Created by https://www.toptal.com/developers/gitignore/api/python,visualstudiocode,emacs,macos,go
-# Edit at https://www.toptal.com/developers/gitignore?templates=python,visualstudiocode,emacs,macos,go
+### C++ ###
+# Prerequisites
+*.d
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+*.smod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
 
 ### Emacs ###
 # -*- mode: gitignore; -*-
@@ -63,17 +97,12 @@ flycheck_*.el
 # https://github.com/github/gitignore/blob/main/community/Golang/Go.AllowList.gitignore
 #
 # Binaries for programs and plugins
-*.exe
 *.exe~
-*.dll
-*.so
-*.dylib
 
 # Test binary, built with `go test -c`
 *.test
 
 # Output of the go coverage tool, specifically when used with LiteIDE
-*.out
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
@@ -303,4 +332,4 @@ pyrightconfig.json
 .history
 .ionide
 
-# End of https://www.toptal.com/developers/gitignore/api/python,visualstudiocode,emacs,macos,go
+# End of https://www.toptal.com/developers/gitignore/api/go,emacs,macos,python,visualstudiocode,c++
