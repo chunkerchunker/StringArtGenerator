@@ -28,9 +28,8 @@ uv run string_art.py --input photo.jpg --output art.png --pins 400 --lines 5000 
 
 ## Dependencies
 
-- **Python 3.12+**: For best performance
+- **Python 3.13+**: For best performance
 - **NumPy**: Vectorized array operations
 - **Pillow**: Image processing
 - **Numba**: JIT compilation for speed
 - **aggdraw**: Anti-aliased drawing for smooth lines
-

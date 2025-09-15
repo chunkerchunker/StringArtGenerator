@@ -2,16 +2,22 @@
 
 This project generates string art images from input photographs by simulating the process of wrapping thread around pins on a circular frame.
 
-Originally based on the work of reddit user /u/kmmeerts from his post: https://www.reddit.com/r/DIY/comments/au0ilz/made_a_string_art_portrait_out_of_a_continuous_2/
+Originally based on the work of reddit user /u/kmmeerts from his post: <https://www.reddit.com/r/DIY/comments/au0ilz/made_a_string_art_portrait_out_of_a_continuous_2/>
 
 ## Implementations
 
 ### Go Version (Original)
+
 - **File**: `main.go`
 - **Build**: `make build`
 - **Run**: `./stringart [options]`
 
+### Python version
+
+- see string-art-python directory
+
 ### C Version (Basic Optimized)
+
 - **File**: `stringart.c`
 - **Build**: `make build-c`
 - **Run**: `./stringart-c [options]`
@@ -22,6 +28,7 @@ Originally based on the work of reddit user /u/kmmeerts from his post: https://w
   - Only uses standard C library plus STB image libraries
 
 ### C Version (Highly Optimized)
+
 - **File**: `stringart_fast.c`
 - **Build**: `make build-fast`
 - **Run**: `./stringart-fast [options]`
@@ -78,12 +85,14 @@ make test         # Original Go version
 ## Dependencies
 
 ### C Versions
+
 - STB libraries (included as headers):
   - `stb_image.h` - Image loading
   - `stb_image_write.h` - PNG output
 - Standard C library with math functions (`-lm`)
 
 ### Go Version
+
 - Standard Go libraries
 - `golang.org/x/image/draw` - Image processing
 - `github.com/antha-lang/antha/antha/anthalib/num` - Numerical operations
@@ -92,21 +101,25 @@ make test         # Original Go version
 
 The optimized C versions provide significant performance improvements:
 
-### Expected Speedups vs Go Version:
+### Expected Speedups vs Go Version
+
 - **`stringart-c` (Basic)**: 1.5-2x faster
 - **`stringart-fast` (Highly Optimized)**: 2-4x faster
 
-### Key Optimizations Applied:
+### Key Optimizations Applied
+
 - **Compiler**: `-O3 -march=native` for CPU-specific optimizations
 - **Memory**: Cache-friendly data layouts and access patterns
 - **Algorithm**: Pre-computed lookup tables and unrolled loops
 - **Math**: Fast floating-point operations (`-ffast-math`)
 - **Function Inlining**: Aggressive inlining for hot code paths
 
-### Recommended Version:
+### Recommended Version
+
 Use **`stringart-fast`** for the best performance. Single-threaded cache optimization outperforms multithreading for this algorithm due to its sequential nature and memory access patterns.
 
-### Performance Testing:
+### Performance Testing
+
 ```bash
 # Compare versions
 time ./stringart -input image.jpg -pins 400 -lines 10000        # Go baseline
@@ -131,6 +144,6 @@ This will process a test image with high-quality settings and open the result.
 
 ## Web Version
 
-For a web-based interface, navigate to: https://halfmonty.github.io/StringArtGenerator/
+For a web-based interface, navigate to: <https://halfmonty.github.io/StringArtGenerator/>
 
 ![](test2.gif)

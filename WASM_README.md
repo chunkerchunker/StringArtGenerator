@@ -7,6 +7,7 @@ This directory contains a WebAssembly (WASM) version of the string art generator
 To build the WASM version, you need:
 
 1. **Emscripten SDK** installed and activated
+
    ```bash
    # Install Emscripten
    git clone https://github.com/emscripten-core/emsdk.git
@@ -19,6 +20,7 @@ To build the WASM version, you need:
 ## Building
 
 1. **Build the WASM module:**
+
    ```bash
    make build-wasm
    ```
@@ -30,6 +32,7 @@ To build the WASM version, you need:
 ## Running the Demo
 
 1. **Serve the files** using a local HTTP server (required due to CORS restrictions):
+
    ```bash
    # Using Python 3
    python3 -m http.server 8000
@@ -41,9 +44,8 @@ To build the WASM version, you need:
    ```
 
 2. **Open the demo** in your browser:
-   ```
-   http://localhost:8000/stringart-demo.html
-   ```
+
+<http://localhost:8000/stringart-demo.html>
 
 ## Usage
 
@@ -67,21 +69,27 @@ The web interface allows you to:
 The WASM module exports these functions:
 
 ### `initStringArt(pins, maxLines, targetSize, outputSize, lineWeight, outputWeight, minDistance)`
+
 Initialize the string art generator with the given parameters.
 
 ### `processImage(imageDataPtr, width, height, channels)`
+
 Process an image and calculate the string art lines. Returns the number of lines generated.
 
 ### `getOutputImage()`
+
 Returns a pointer to the generated output image data (RGBA format).
 
 ### `getOutputSize()`
+
 Returns the size of the output image.
 
 ### `getLineCount()`
+
 Returns the number of lines in the generated string art.
 
 ### `cleanup()`
+
 Free all allocated memory.
 
 ## Performance Notes
@@ -103,15 +111,18 @@ Free all allocated memory.
 ## Troubleshooting
 
 **WASM module fails to load:**
+
 - Ensure you're serving files over HTTP (not file://)
 - Check browser console for detailed error messages
 - Verify Emscripten compiled successfully
 
 **Out of memory errors:**
+
 - Reduce image size or processing parameters
 - The algorithm is memory-intensive for large images
 
 **Slow performance:**
+
 - Reduce number of pins and max lines
 - Use smaller processing size
 - Close other browser tabs to free memory
