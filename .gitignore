@@ -1,5 +1,8 @@
 *.png
 stringart
+stringart-c
+stringart-fast
+
 
 # Created by https://www.toptal.com/developers/gitignore/api/python,visualstudiocode,emacs,macos,go
 # Edit at https://www.toptal.com/developers/gitignore?templates=python,visualstudiocode,emacs,macos,go
