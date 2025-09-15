@@ -4,37 +4,86 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>String Art Generator - WASM Demo</title>
+    <title>String Art Generator</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
+            margin: 0;
+            padding: 0;
             background-color: #f5f5f5;
+            height: 100vh;
+            overflow: hidden;
         }
 
-        .container {
+        .app-container {
+            display: flex;
+            height: 100vh;
+        }
+
+        .sidebar {
+            width: 320px;
             background: white;
-            border-radius: 8px;
-            padding: 30px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
+            overflow-y: auto;
+            padding: 20px;
+            z-index: 10;
+            transition: all 0.3s ease;
+            position: relative;
+        }
+
+        .sidebar.collapsed {
+            width: 0;
+            padding: 0;
+            overflow: hidden;
+        }
+
+        .sidebar.collapsed .controls,
+        .sidebar.collapsed .auto-regenerate-section,
+        .sidebar.collapsed .generate-btn,
+        .sidebar.collapsed .status,
+        .sidebar.collapsed .progress-bar {
+            display: none;
+        }
+
+        .sidebar.collapsed h1 {
+            display: none;
+        }
+
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: white;
         }
 
         h1 {
             color: #333;
             text-align: center;
-            margin-bottom: 30px;
+            margin: 0 0 30px 0;
+            font-size: 1.5rem;
+        }
+
+        .sidebar-toggle {
+            background: #f8f9fa;
+            border: none;
+            border-bottom: 3px solid transparent;
+            padding: 15px 15px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            color: #666;
+            transition: all 0.3s;
+        }
+
+        .sidebar-toggle:hover {
+            background: #e9ecef;
+            color: #333;
         }
 
         .controls {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-bottom: 30px;
-            padding: 20px;
-            background: #f8f9fa;
-            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
         }
 
         .control-group {
@@ -90,9 +139,9 @@
             background: #28a745;
             color: white;
             border: none;
-            padding: 12px 30px;
+            padding: 12px 20px;
             border-radius: 5px;
-            font-size: 16px;
+            font-size: 14px;
             cursor: pointer;
             transition: background-color 0.3s;
             width: 100%;
@@ -108,35 +157,130 @@
             cursor: not-allowed;
         }
 
-        .preview-container {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 20px;
-            margin-top: 30px;
+        .tabs {
+            display: flex;
+            border-bottom: 2px solid #ddd;
+            background: #f8f9fa;
+            margin: 0;
         }
 
-        .preview-box {
-            border: 2px dashed #ddd;
-            border-radius: 8px;
+        .tab {
+            padding: 15px 30px;
+            background: none;
+            border: none;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            color: #666;
+            transition: all 0.3s;
+            border-bottom: 3px solid transparent;
+        }
+
+        .tab:hover {
+            background: #e9ecef;
+            color: #333;
+        }
+
+        .tab.active {
+            color: #007bff;
+            border-bottom-color: #007bff;
+            background: white;
+        }
+
+        .tab-content {
+            flex: 1;
             padding: 20px;
-            text-align: center;
-            min-height: 300px;
-            display: flex;
-            flex-direction: column;
+            overflow: auto;
+            display: none;
             align-items: center;
             justify-content: center;
+            min-height: calc(100vh - 120px);
         }
 
-        .preview-box img {
+        .tab-content.active {
+            display: flex;
+        }
+
+        .tab-content img,
+        .tab-content svg {
             max-width: 100%;
-            max-height: 400px;
+            max-height: 100%;
+            object-fit: contain;
             border-radius: 4px;
             box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
         }
 
-        .preview-box h3 {
-            margin-top: 0;
+        .zoomable-container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            cursor: grab;
+        }
+
+        .zoomable-container:active {
+            cursor: grabbing;
+        }
+
+        .zoomable-content {
+            position: relative;
+            transform-origin: center center;
+            transition: transform 0.1s ease-out;
+            will-change: transform;
+        }
+
+        .zoom-controls {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            z-index: 100;
+        }
+
+        .zoom-btn {
+            background: rgba(255, 255, 255, 0.9);
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 8px 12px;
+            cursor: pointer;
+            font-weight: bold;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            transition: background-color 0.2s;
+        }
+
+        .zoom-btn:hover {
+            background: white;
+        }
+
+        .zoom-info {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 12px;
+            z-index: 100;
+        }
+
+        /* SVG styling to avoid repeating attributes */
+        #stringArtSVG line {
+            stroke: black;
+            stroke-width: 1;
+        }
+
+        #stringArtSVG circle {
+            fill: black;
+            r: 2;
+        }
+
+        .empty-state {
+            text-align: center;
             color: #666;
+            font-size: 18px;
         }
 
         .status {
@@ -194,91 +338,159 @@
             background: #138496;
         }
 
+        .download-section {
+            margin-top: 20px;
+            text-align: center;
+        }
+
         @media (max-width: 768px) {
-            .preview-container {
-                grid-template-columns: 1fr;
+            .app-container {
+                flex-direction: column;
+                height: auto;
+                min-height: 100vh;
             }
 
-            .controls {
-                grid-template-columns: 1fr;
+            .sidebar {
+                width: 100%;
+                padding: 15px;
+                box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            }
+
+            .sidebar.collapsed {
+                width: 100%;
+                padding: 15px;
+            }
+
+            .sidebar.collapsed .controls,
+            .sidebar.collapsed .auto-regenerate-section,
+            .sidebar.collapsed .generate-btn,
+            .sidebar.collapsed .status,
+            .sidebar.collapsed .progress-bar {
+                display: flex;
+            }
+
+            .sidebar.collapsed h1 {
+                writing-mode: initial;
+                text-orientation: initial;
+                font-size: 1.5rem;
+                margin: 0 0 30px 0;
+                text-align: center;
+            }
+
+            .sidebar-toggle {
+                display: none;
+            }
+
+            .main-content {
+                min-height: 60vh;
+            }
+
+            .tab-content {
+                min-height: 50vh;
+                padding: 15px;
+            }
+
+            .tab {
+                padding: 12px 20px;
+                font-size: 14px;
+            }
+
+            body {
+                overflow: auto;
             }
         }
     </style>
 </head>
 
 <body>
-    <div class="container">
-        <h1>🧵 String Art Generator</h1>
+    <div class="app-container">
+        <div class="sidebar" id="sidebar">
+            <h1>🧵 String Art Generator</h1>
 
-        <div class="controls">
-            <div class="control-group">
-                <label for="imageInput">Choose Image:</label>
-                <label for="imageInput" class="file-input-wrapper">
-                    <input type="file" id="imageInput" accept="image/*">
-                    <span id="fileInputText">Select Image File</span>
+            <div class="controls">
+                <div class="control-group">
+                    <label for="imageInput">Choose Image:</label>
+                    <label for="imageInput" class="file-input-wrapper">
+                        <input type="file" id="imageInput" accept="image/*">
+                        <span id="fileInputText">Select Image File</span>
+                    </label>
+                </div>
+
+                <div class="control-group">
+                    <label for="targetSize">Processing Size:</label>
+                    <input type="range" id="targetSize" min="200" max="1000" value="500" step="50">
+                    <div class="range-value" id="targetSizeValue">500</div>
+                </div>
+
+                <div class="control-group">
+                    <label for="pins">Pins:</label>
+                    <input type="range" id="pins" min="50" max="500" value="360">
+                    <div class="range-value" id="pinsValue">360</div>
+                </div>
+
+                <div class="control-group">
+                    <label for="maxLines">Max Lines:</label>
+                    <input type="range" id="maxLines" min="50" max="10000" value="4000" step="50">
+                    <div class="range-value" id="maxLinesValue">4000</div>
+                </div>
+
+                <div class="control-group">
+                    <label for="minDistance">Min Distance:</label>
+                    <input type="range" id="minDistance" min="10" max="100" value="30">
+                    <div class="range-value" id="minDistanceValue">30</div>
+                </div>
+
+                <div class="control-group">
+                    <label for="lineWeight">Line Weight:</label>
+                    <input type="range" id="lineWeight" min="1" max="40" value="20">
+                    <div class="range-value" id="lineWeightValue">20</div>
+                </div>
+
+                <div class="control-group">
+                    <label for="outputSize">Output Size:</label>
+                    <input type="range" id="outputSize" min="400" max="20000" value="8000" step="50">
+                    <div class="range-value" id="outputSizeValue">8000</div>
+                </div>
+
+            </div>
+
+            <div class="auto-regenerate-section" style="text-align: center; margin: 20px 0;">
+                <label
+                    style="display: flex; align-items: center; justify-content: center; gap: 8px; font-weight: 600; color: #555;">
+                    <input type="checkbox" id="autoRegenerate" checked style="transform: scale(1.2);">
+                    Auto-regenerate on parameter changes
                 </label>
             </div>
 
-            <div class="control-group">
-                <label for="pins">Pins:</label>
-                <input type="range" id="pins" min="50" max="500" value="100">
-                <div class="range-value" id="pinsValue">100</div>
-            </div>
+            <button class="generate-btn" id="generateBtn" onclick="generateStringArt()">
+                Generate String Art
+            </button>
 
-            <div class="control-group">
-                <label for="maxLines">Max Lines:</label>
-                <input type="range" id="maxLines" min="50" max="10000" value="500" step="50">
-                <div class="range-value" id="maxLinesValue">500</div>
-            </div>
-
-            <div class="control-group">
-                <label for="targetSize">Processing Size:</label>
-                <input type="range" id="targetSize" min="200" max="800" value="300" step="50">
-                <div class="range-value" id="targetSizeValue">300</div>
-            </div>
-
-            <div class="control-group">
-                <label for="outputSize">Output Size:</label>
-                <input type="range" id="outputSize" min="400" max="2000" value="800" step="50">
-                <div class="range-value" id="outputSizeValue">800</div>
-            </div>
-
-            <div class="control-group">
-                <label for="lineWeight">Line Weight:</label>
-                <input type="range" id="lineWeight" min="1" max="20" value="8">
-                <div class="range-value" id="lineWeightValue">8</div>
-            </div>
-
-            <div class="control-group">
-                <label for="outputWeight">Output Weight:</label>
-                <input type="range" id="outputWeight" min="1" max="30" value="8">
-                <div class="range-value" id="outputWeightValue">8</div>
-            </div>
-
-            <div class="control-group">
-                <label for="minDistance">Min Distance:</label>
-                <input type="range" id="minDistance" min="10" max="100" value="30">
-                <div class="range-value" id="minDistanceValue">30</div>
+            <div class="status" id="status" style="display: none;"></div>
+            <div class="progress-bar" id="progressBar" style="display: none;">
+                <div class="progress-fill" id="progressFill"></div>
             </div>
         </div>
 
-        <button class="generate-btn" id="generateBtn" onclick="generateStringArt()">
-            Generate String Art
-        </button>
-
-        <div class="status" id="status" style="display: none;"></div>
-        <div class="progress-bar" id="progressBar" style="display: none;">
-            <div class="progress-fill" id="progressFill"></div>
-        </div>
-
-        <div class="preview-container">
-            <div class="preview-box" id="originalPreview">
-                <h3>Original Image</h3>
-                <p>Select an image file to preview</p>
+        <div class="main-content">
+            <div class="tabs">
+                <button class="sidebar-toggle" id="sidebarToggle" onclick="toggleSidebar()">
+                    <span id="toggleIcon">◀</span>
+                </button>
+                <button class="tab active" onclick="switchTab('original')">Original Image</button>
+                <button class="tab" onclick="switchTab('result')">String Art Result</button>
             </div>
-            <div class="preview-box" id="stringArtPreview">
-                <h3>String Art Result</h3>
-                <p>Generated string art will appear here</p>
+
+            <div class="tab-content active" id="originalTab">
+                <div class="empty-state" id="originalEmpty">
+                    Select an image file to preview
+                </div>
+            </div>
+
+            <div class="tab-content" id="resultTab">
+                <div class="empty-state" id="resultEmpty">
+                    Generated string art will appear here
+                </div>
             </div>
         </div>
     </div>
@@ -288,14 +500,50 @@
         let isProcessing = false;
         let runCount = 0;
 
+        // Global storage for generated string art data
+        let currentLineSequence = null;
+        let currentPinCount = 0;
+        let currentLineCount = 0;
+
+        // Auto-regeneration variables
+        let regenerationTimeout = null;
+        let hasInitialImage = false;
+
+        // Zoom and pan variables
+        let zoomLevel = 1;
+        let panX = 0;
+        let panY = 0;
+        let isDragging = false;
+        let lastMouseX = 0;
+        let lastMouseY = 0;
+
         // Initialize range input displays
         document.addEventListener('DOMContentLoaded', function () {
-            const ranges = ['pins', 'maxLines', 'targetSize', 'outputSize', 'lineWeight', 'outputWeight', 'minDistance'];
+            const ranges = ['pins', 'maxLines', 'targetSize', 'outputSize', 'lineWeight', 'minDistance'];
             ranges.forEach(id => {
                 const input = document.getElementById(id);
                 const display = document.getElementById(id + 'Value');
+
                 input.addEventListener('input', () => {
                     display.textContent = input.value;
+
+                    // Update SVG dynamically for output parameters if we have generated data
+                    if (currentLineSequence && id === 'outputSize') {
+                        const outputSize = parseInt(document.getElementById('outputSize').value);
+
+                        // Try efficient update first, fallback to full re-render if needed
+                        if (!updateSVGParameters(outputSize)) {
+                            updateSVGOutput();
+                        }
+                    }
+                });
+
+                // Add change event for auto-regeneration (fires when user releases slider)
+                input.addEventListener('change', () => {
+                    const inputParams = ['pins', 'maxLines', 'targetSize', 'lineWeight', 'minDistance'];
+                    if (inputParams.includes(id)) {
+                        scheduleAutoRegeneration();
+                    }
                 });
             });
 
@@ -317,24 +565,6 @@
                 if (typeof StringArtModule !== 'undefined') {
                     console.log('StringArtModule found, initializing...');
                     stringArtModule = await StringArtModule();
-                    console.log('WASM module initialized:', stringArtModule);
-                    console.log('Module type:', typeof stringArtModule);
-                    console.log('Is Promise?', stringArtModule instanceof Promise);
-                    console.log('Available properties:', Object.keys(stringArtModule));
-                    console.log('Available functions:', Object.keys(stringArtModule).filter(k => k.startsWith('_')));
-                    console.log('ccall available:', typeof stringArtModule.ccall);
-                    console.log('_malloc available:', typeof stringArtModule._malloc);
-                    console.log('HEAPU8 available:', typeof stringArtModule.HEAPU8);
-
-                    // Check for essential memory properties
-                    console.log('Essential memory properties:');
-                    ['wasmMemory', 'HEAP8', 'HEAPU8', 'HEAP32'].forEach(prop => {
-                        try {
-                            console.log(`  ${prop}:`, typeof stringArtModule[prop]);
-                        } catch (e) {
-                            console.log(`  ${prop}: [error accessing]`);
-                        }
-                    });
 
                     showStatus('WASM module loaded successfully!', 'success');
                     setTimeout(() => hideStatus(), 2000);
@@ -347,6 +577,17 @@
             }
         }
 
+        // Tab switching function
+        function switchTab(tabName) {
+            // Remove active class from all tabs and tab contents
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+
+            // Add active class to clicked tab and corresponding content
+            event.target.classList.add('active');
+            document.getElementById(tabName + 'Tab').classList.add('active');
+        }
+
         document.getElementById('imageInput').addEventListener('change', function (e) {
             const file = e.target.files[0];
             if (file) {
@@ -357,15 +598,34 @@
                 reader.onload = function (e) {
                     const img = new Image();
                     img.onload = function () {
-                        const preview = document.getElementById('originalPreview');
-                        preview.innerHTML = '<h3>Original Image</h3>';
-                        preview.appendChild(img);
+                        const originalTab = document.getElementById('originalTab');
+                        originalTab.innerHTML = '';
+                        originalTab.appendChild(img);
+                        hasInitialImage = true;
                     };
                     img.src = e.target.result;
                 };
                 reader.readAsDataURL(file);
             }
         });
+
+        // Schedule auto-regeneration with debouncing
+        function scheduleAutoRegeneration() {
+            const autoRegenerate = document.getElementById('autoRegenerate');
+            if (!autoRegenerate.checked || !hasInitialImage || isProcessing) {
+                return;
+            }
+
+            // Clear existing timeout
+            if (regenerationTimeout) {
+                clearTimeout(regenerationTimeout);
+            }
+
+            // Schedule regeneration after a short delay
+            regenerationTimeout = setTimeout(() => {
+                generateStringArt();
+            }, 500); // 500ms delay after user releases slider
+        }
 
         async function generateStringArt() {
             console.log('=== generateStringArt called ===');
@@ -383,12 +643,6 @@
                 return;
             }
             console.log('File selected:', fileInput.files[0].name);
-
-            console.log('Checking WASM module readiness...');
-            console.log('stringArtModule:', stringArtModule);
-            console.log('stringArtModule._malloc:', stringArtModule?._malloc);
-            console.log('stringArtModule.HEAPU8:', stringArtModule?.HEAPU8);
-            console.log('stringArtModule.ccall:', stringArtModule?.ccall);
 
             if (!stringArtModule || !stringArtModule._malloc || !stringArtModule.ccall) {
                 showStatus('WASM module not ready. Please wait and try again.', 'error');
@@ -446,6 +700,17 @@
             generateBtn.disabled = true;
             generateBtn.textContent = 'Processing...';
 
+            // Clear previous generation data
+            currentLineSequence = null;
+            currentPinCount = 0;
+            currentLineCount = 0;
+
+            // Clear any pending auto-regeneration
+            if (regenerationTimeout) {
+                clearTimeout(regenerationTimeout);
+                regenerationTimeout = null;
+            }
+
             try {
                 console.log('Starting try block...');
                 showStatus('Processing image...', 'loading');
@@ -459,32 +724,23 @@
                 const targetSize = parseInt(document.getElementById('targetSize').value);
                 const outputSize = parseInt(document.getElementById('outputSize').value);
                 const lineWeight = parseInt(document.getElementById('lineWeight').value);
-                const outputWeight = parseInt(document.getElementById('outputWeight').value);
                 const minDistance = parseInt(document.getElementById('minDistance').value);
-                console.log('Parameters retrieved:', { pins, maxLines, targetSize, outputSize, lineWeight, outputWeight, minDistance });
+                console.log('Parameters retrieved:', { pins, maxLines, targetSize, outputSize, lineWeight, minDistance });
 
                 // Validate parameters
                 console.log('Using parameters:', {
-                    pins, maxLines, targetSize, outputSize, lineWeight, outputWeight, minDistance
+                    pins, maxLines, targetSize, outputSize, lineWeight, minDistance
                 });
 
                 if (pins < 50 || pins > 1000) throw new Error('Invalid pins count');
                 if (maxLines < 10 || maxLines > 50000) throw new Error('Invalid max lines');
                 if (targetSize < 100 || targetSize > 2000) throw new Error('Invalid target size');
 
-                // Clean up previous state first
-                console.log('Cleaning up previous state...');
-                try {
-                    stringArtModule.ccall('cleanup', null, [], []);
-                } catch (e) {
-                    console.warn('Cleanup before init failed:', e);
-                }
-
                 // Initialize the generator
                 console.log('Initializing string art generator...');
                 const initResult = stringArtModule.ccall('initStringArt', 'number',
                     ['number', 'number', 'number', 'number', 'number', 'number', 'number'],
-                    [pins, maxLines, targetSize, outputSize, lineWeight, outputWeight, minDistance]);
+                    [pins, maxLines, targetSize, outputSize, lineWeight, lineWeight, minDistance]);
                 console.log('Init result:', initResult);
 
                 if (initResult === 2) {
@@ -562,61 +818,36 @@
                 }
 
                 showProgress(80);
-                showStatus('Generating output image...', 'loading');
+                showStatus('Generating SVG output...', 'loading');
 
-                // Get the output image
-                const outputImagePtr = stringArtModule.ccall('getOutputImage', 'number', [], []);
-                const outputSizeActual = stringArtModule.ccall('getOutputSize', 'number', [], []);
+                // Get the line sequence instead of rendered image
+                const lineSequencePtr = stringArtModule.ccall('getLineSequence', 'number', [], []);
+                const totalLineCount = stringArtModule.ccall('getLineCount', 'number', [], []);
 
-                if (outputImagePtr === 0) {
-                    throw new Error('Failed to generate output image');
+                if (lineSequencePtr === 0 || totalLineCount === 0) {
+                    throw new Error('Failed to generate line sequence');
                 }
 
-                // Convert the output to a displayable image
-                const outputImageData = new Uint8Array(
+                // Extract line sequence from WASM memory
+                const lineSequence = new Int32Array(
                     stringArtModule.HEAPU8.buffer,
-                    outputImagePtr,
-                    outputSizeActual * outputSizeActual * 4
+                    lineSequencePtr,
+                    totalLineCount
                 );
 
-                const canvas = document.createElement('canvas');
-                canvas.width = outputSizeActual;
-                canvas.height = outputSizeActual;
-                const ctx = canvas.getContext('2d');
-                const imageDataCanvas = ctx.createImageData(outputSizeActual, outputSizeActual);
-                imageDataCanvas.data.set(outputImageData);
-                ctx.putImageData(imageDataCanvas, 0, 0);
+                // Store data globally for dynamic updates
+                currentLineSequence = Array.from(lineSequence); // Copy to regular array
+                currentPinCount = pins;
+                currentLineCount = totalLineCount;
 
-                // Free the output image memory to prevent memory leak
-                stringArtModule.ccall('freeOutputImage', null, ['number'], [outputImagePtr]);
+                // Create and display initial SVG
+                updateSVGOutput();
 
                 showProgress(100);
-                showStatus(`String art generated successfully! Used ${lineCount} lines.`, 'success');
-
-                // Display result
-                const preview = document.getElementById('stringArtPreview');
-                preview.innerHTML = '<h3>String Art Result</h3>';
-                const resultImg = new Image();
-                resultImg.src = canvas.toDataURL();
-                resultImg.style.maxWidth = '100%';
-                resultImg.style.maxHeight = '400px';
-                preview.appendChild(resultImg);
-
-                // Add download button
-                const downloadBtn = document.createElement('button');
-                downloadBtn.className = 'download-btn';
-                downloadBtn.textContent = 'Download Result';
-                downloadBtn.onclick = () => {
-                    const link = document.createElement('a');
-                    link.download = 'string-art-result.png';
-                    link.href = canvas.toDataURL();
-                    link.click();
-                };
-                preview.appendChild(downloadBtn);
+                showStatus(`String art generated successfully! Used ${currentLineCount} lines.`, 'success');
 
                 // Cleanup
                 try {
-                    stringArtModule.ccall('cleanup', null, [], []);
                     // Force garbage collection if available
                     if (window.gc) {
                         window.gc();
@@ -750,6 +981,372 @@
 
         function hideProgress() {
             document.getElementById('progressBar').style.display = 'none';
+        }
+
+        // Calculate pin coordinates based on stringart_core.c logic
+        function calculatePinCoordinates(pinCount, outputSize) {
+            const center = outputSize * 0.5;
+            const radius = center - 1.0;
+            const angleStep = 2.0 * Math.PI / pinCount;
+            const pinCoords = [];
+
+            for (let i = 0; i < pinCount; i++) {
+                const angle = angleStep * i;
+                const x = Math.floor(center + radius * Math.cos(angle));
+                const y = Math.floor(center + radius * Math.sin(angle));
+                pinCoords.push({ x, y });
+            }
+
+            return pinCoords;
+        }
+
+        // Update SVG parameters efficiently without full re-render
+        function updateSVGParameters(outputSize) {
+            const svg = document.getElementById('stringArtSVG');
+            if (!svg || !currentLineSequence) return false;
+
+            const currentSize = parseInt(svg.getAttribute('width'));
+            const sizeChanged = currentSize !== outputSize;
+
+            // Update SVG dimensions if size changed
+            if (sizeChanged) {
+                svg.setAttribute('width', outputSize);
+                svg.setAttribute('height', outputSize);
+                svg.setAttribute('viewBox', `0 0 ${outputSize} ${outputSize}`);
+
+                // Recalculate pin coordinates for new size
+                const pinCoords = calculatePinCoordinates(currentPinCount, outputSize);
+
+                // Update pin positions
+                const pins = svg.querySelectorAll('circle');
+                pins.forEach((pin, index) => {
+                    if (index < pinCoords.length) {
+                        pin.setAttribute('cx', pinCoords[index].x);
+                        pin.setAttribute('cy', pinCoords[index].y);
+                    }
+                });
+
+                // Update line positions
+                const lines = svg.querySelectorAll('line');
+                lines.forEach((line, index) => {
+                    if (index < currentLineSequence.length - 1) {
+                        const fromPin = currentLineSequence[index];
+                        const toPin = currentLineSequence[index + 1];
+
+                        if (fromPin >= 0 && fromPin < pinCoords.length &&
+                            toPin >= 0 && toPin < pinCoords.length) {
+                            line.setAttribute('x1', pinCoords[fromPin].x);
+                            line.setAttribute('y1', pinCoords[fromPin].y);
+                            line.setAttribute('x2', pinCoords[toPin].x);
+                            line.setAttribute('y2', pinCoords[toPin].y);
+                        }
+                    }
+                });
+            }
+
+            return true; // Successfully updated in-place
+        }
+
+        // Update SVG output using current slider values
+        function updateSVGOutput() {
+            if (!currentLineSequence) return;
+
+            // Reset zoom and pan
+            zoomLevel = 1;
+            panX = 0;
+            panY = 0;
+
+            // Get current slider values
+            const outputSize = parseInt(document.getElementById('outputSize').value);
+
+            // Create SVG element
+            const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+            svg.setAttribute('width', outputSize);
+            svg.setAttribute('height', outputSize);
+            svg.setAttribute('viewBox', `0 0 ${outputSize} ${outputSize}`);
+            svg.style.background = 'white';
+
+            // Calculate pin coordinates for current output size
+            const pinCoords = calculatePinCoordinates(currentPinCount, outputSize);
+
+            // Render lines using SVG
+            renderStringsToSVG(svg, currentLineSequence, pinCoords, outputSize);
+
+            // Update display in result tab
+            const resultTab = document.getElementById('resultTab');
+            resultTab.innerHTML = '';
+
+            // Create zoomable container
+            const zoomableContainer = document.createElement('div');
+            zoomableContainer.className = 'zoomable-container';
+            zoomableContainer.style.position = 'relative';
+            zoomableContainer.style.width = '100%';
+            zoomableContainer.style.height = '100%';
+
+            const zoomableContent = document.createElement('div');
+            zoomableContent.className = 'zoomable-content';
+            zoomableContent.style.display = 'flex';
+            zoomableContent.style.alignItems = 'center';
+            zoomableContent.style.justifyContent = 'center';
+            zoomableContent.style.height = '100%';
+
+            zoomableContent.appendChild(svg);
+
+            // Add zoom controls
+            const zoomControls = document.createElement('div');
+            zoomControls.className = 'zoom-controls';
+            zoomControls.innerHTML = `
+                <button class="zoom-btn" onclick="adjustZoom(0.2)">+</button>
+                <button class="zoom-btn" onclick="adjustZoom(-0.2)">−</button>
+                <button class="zoom-btn" onclick="resetZoom()">Reset</button>
+            `;
+
+            // Add zoom info
+            const zoomInfo = document.createElement('div');
+            zoomInfo.className = 'zoom-info';
+            zoomInfo.id = 'zoomInfo';
+            zoomInfo.textContent = 'Zoom: 100% | Cmd+Scroll to zoom, Scroll to pan';
+
+            zoomableContainer.appendChild(zoomableContent);
+            zoomableContainer.appendChild(zoomControls);
+            zoomableContainer.appendChild(zoomInfo);
+
+            // Add download section with line count and button
+            const downloadSection = document.createElement('div');
+            downloadSection.className = 'download-section';
+            downloadSection.style.position = 'absolute';
+            downloadSection.style.bottom = '20px';
+            downloadSection.style.right = '20px';
+            downloadSection.style.zIndex = '100';
+            downloadSection.style.textAlign = 'center';
+
+            // Add line count message
+            const lineCountMsg = document.createElement('div');
+            lineCountMsg.style.color = '#666';
+            lineCountMsg.style.fontSize = '14px';
+            lineCountMsg.style.marginBottom = '8px';
+            lineCountMsg.textContent = `${currentLineCount - 1} lines`;
+            downloadSection.appendChild(lineCountMsg);
+
+            const downloadBtn = document.createElement('button');
+            downloadBtn.className = 'download-btn';
+            downloadBtn.textContent = 'Download as SVG';
+            downloadBtn.onclick = () => {
+                downloadSVGWithStyles(svg);
+            };
+            downloadSection.appendChild(downloadBtn);
+            zoomableContainer.appendChild(downloadSection);
+
+            resultTab.appendChild(zoomableContainer);
+
+            // Add event listeners for zoom and pan
+            setupZoomAndPan(zoomableContainer, zoomableContent);
+
+            // Switch to result tab when SVG is updated
+            switchTabProgrammatically('result');
+        }
+
+        // Programmatic tab switching (without event)
+        function switchTabProgrammatically(tabName) {
+            // Remove active class from all tabs and tab contents
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+
+            // Add active class to target tab and corresponding content
+            const tabs = document.querySelectorAll('.tab');
+            if (tabName === 'original') {
+                tabs[0].classList.add('active');
+            } else if (tabName === 'result') {
+                tabs[1].classList.add('active');
+            }
+            document.getElementById(tabName + 'Tab').classList.add('active');
+        }
+
+        // Toggle sidebar expand/collapse
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const toggleIcon = document.getElementById('toggleIcon');
+
+            sidebar.classList.toggle('collapsed');
+
+            if (sidebar.classList.contains('collapsed')) {
+                toggleIcon.textContent = '▶';
+            } else {
+                toggleIcon.textContent = '◀';
+            }
+        }
+
+        // Setup zoom and pan functionality
+        function setupZoomAndPan(container, content) {
+            // Wheel event for zoom (Ctrl+scroll) and pan (normal scroll)
+            container.addEventListener('wheel', (e) => {
+                e.preventDefault();
+
+                if (e.ctrlKey || e.metaKey) {
+                    // Zoom functionality
+                    const delta = e.deltaY > 0 ? -0.1 : 0.1;
+                    const rect = container.getBoundingClientRect();
+                    const centerX = rect.width / 2;
+                    const centerY = rect.height / 2;
+
+                    adjustZoomAt(delta, centerX, centerY);
+                } else {
+                    // Pan functionality
+                    const panSpeed = 2;
+                    panX -= e.deltaX * panSpeed;
+                    panY -= e.deltaY * panSpeed;
+                    updateTransform(content);
+                }
+            });
+
+            // Mouse drag for panning
+            let isDragging = false;
+            let startX = 0;
+            let startY = 0;
+            let startPanX = 0;
+            let startPanY = 0;
+
+            container.addEventListener('mousedown', (e) => {
+                isDragging = true;
+                startX = e.clientX;
+                startY = e.clientY;
+                startPanX = panX;
+                startPanY = panY;
+                container.style.cursor = 'grabbing';
+            });
+
+            document.addEventListener('mousemove', (e) => {
+                if (!isDragging) return;
+
+                const deltaX = e.clientX - startX;
+                const deltaY = e.clientY - startY;
+
+                panX = startPanX + deltaX;
+                panY = startPanY + deltaY;
+                updateTransform(content);
+            });
+
+            document.addEventListener('mouseup', () => {
+                if (isDragging) {
+                    isDragging = false;
+                    container.style.cursor = 'grab';
+                }
+            });
+        }
+
+        // Adjust zoom level
+        function adjustZoom(delta) {
+            zoomLevel = Math.max(0.1, Math.min(5, zoomLevel + delta));
+            const content = document.querySelector('.zoomable-content');
+            if (content) {
+                updateTransform(content);
+            }
+        }
+
+        // Adjust zoom at specific point
+        function adjustZoomAt(delta, clientX, clientY) {
+            const oldZoom = zoomLevel;
+            zoomLevel = Math.max(0.1, Math.min(5, zoomLevel + delta));
+
+            // Adjust pan to zoom into the cursor position
+            const zoomFactor = zoomLevel / oldZoom;
+            const rect = document.querySelector('.zoomable-container').getBoundingClientRect();
+            const centerX = rect.width / 2;
+            const centerY = rect.height / 2;
+
+            panX = (panX - (clientX - centerX)) * zoomFactor + (clientX - centerX);
+            panY = (panY - (clientY - centerY)) * zoomFactor + (clientY - centerY);
+
+            const content = document.querySelector('.zoomable-content');
+            if (content) {
+                updateTransform(content);
+            }
+        }
+
+        // Reset zoom and pan
+        function resetZoom() {
+            zoomLevel = 1;
+            panX = 0;
+            panY = 0;
+            const content = document.querySelector('.zoomable-content');
+            if (content) {
+                updateTransform(content);
+            }
+        }
+
+        // Update CSS transform
+        function updateTransform(content) {
+            if (content) {
+                content.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`;
+
+                // Update zoom info
+                const zoomInfo = document.getElementById('zoomInfo');
+                if (zoomInfo) {
+                    zoomInfo.textContent = `Zoom: ${Math.round(zoomLevel * 100)}% | Ctrl+Scroll to zoom, Scroll to pan`;
+                }
+            }
+        }
+
+        // Download SVG with embedded styles for standalone viewing
+        function downloadSVGWithStyles(originalSvg) {
+            // Clone the SVG to avoid modifying the original
+            const svgClone = originalSvg.cloneNode(true);
+
+            // Create a style element with the necessary CSS
+            const styleElement = document.createElementNS('http://www.w3.org/2000/svg', 'style');
+            styleElement.textContent = `
+                line {
+                    stroke: black;
+                    stroke-width: 1;
+                }
+                circle {
+                    fill: black;
+                    r: 2;
+                }
+            `;
+
+            // Insert style element as the first child of the SVG
+            svgClone.insertBefore(styleElement, svgClone.firstChild);
+
+            // Serialize and download
+            const svgData = new XMLSerializer().serializeToString(svgClone);
+            const blob = new Blob([svgData], { type: 'image/svg+xml' });
+            const link = document.createElement('a');
+            link.download = 'string-art-result.svg';
+            link.href = URL.createObjectURL(blob);
+            link.click();
+        }
+
+        // Render string art lines to SVG
+        function renderStringsToSVG(svg, lineSequence, pinCoords, size) {
+            // Add SVG ID for later reference
+            svg.setAttribute('id', 'stringArtSVG');
+
+            // Add pins as small circles with minimal attributes (styling via CSS)
+            for (let i = 0; i < pinCoords.length; i++) {
+                const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+                circle.setAttribute('cx', pinCoords[i].x);
+                circle.setAttribute('cy', pinCoords[i].y);
+                svg.appendChild(circle);
+            }
+
+            // Add lines between pins with minimal attributes (styling via CSS)
+            for (let i = 0; i < lineSequence.length - 1; i++) {
+                const fromPin = lineSequence[i];
+                const toPin = lineSequence[i + 1];
+
+                if (fromPin < 0 || fromPin >= pinCoords.length ||
+                    toPin < 0 || toPin >= pinCoords.length) {
+                    continue; // Skip invalid pin indices
+                }
+
+                const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                line.setAttribute('x1', pinCoords[fromPin].x);
+                line.setAttribute('y1', pinCoords[fromPin].y);
+                line.setAttribute('x2', pinCoords[toPin].x);
+                line.setAttribute('y2', pinCoords[toPin].y);
+                svg.appendChild(line);
+            }
         }
     </script>
 
