@@ -424,8 +424,8 @@
 
                 <div class="control-group">
                     <label for="pins">Pins:</label>
-                    <input type="range" id="pins" min="50" max="500" value="360">
-                    <div class="range-value" id="pinsValue">360</div>
+                    <input type="range" id="pins" min="50" max="500" value="288">
+                    <div class="range-value" id="pinsValue">288</div>
                 </div>
 
                 <div class="control-group">
@@ -1303,16 +1303,27 @@
                     fill: black;
                     r: 2;
                 }
+                svg {
+                    width: 100%;
+                    height: auto;
+                    max-height: 100vh;
+                }
             `;
 
             // Insert style element as the first child of the SVG
             svgClone.insertBefore(styleElement, svgClone.firstChild);
 
+            // generate the output filename
+            const fileInput = document.getElementById('imageInput');
+            const parts = fileInput.files[0].name.split(".");
+            const baseName = parts.slice(0, -1).join(".");
+            const outname = `${baseName}-strings.svg`;
+
             // Serialize and download
             const svgData = new XMLSerializer().serializeToString(svgClone);
             const blob = new Blob([svgData], { type: 'image/svg+xml' });
             const link = document.createElement('a');
-            link.download = 'string-art-result.svg';
+            link.download = outname;
             link.href = URL.createObjectURL(blob);
             link.click();
         }
