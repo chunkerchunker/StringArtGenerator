@@ -17,6 +17,15 @@ let zoomLevel = 1;
 let panX = 0;
 let panY = 0;
 
+// Zoom and pan state for original image
+let imgZoomLevel = 1;
+let imgPanX = 0;
+let imgPanY = 0;
+
+// Store original image and display info for cropping
+let originalImage = null;
+let imageDisplayInfo = null;
+
 // Initialize range input displays
 document.addEventListener("DOMContentLoaded", () => {
     const ranges = [
@@ -44,6 +53,11 @@ document.addEventListener("DOMContentLoaded", () => {
                 if (!updateSVGParameters(outputSize)) {
                     updateSVGOutput();
                 }
+            }
+
+            // Update image canvas when targetSize changes
+            if (id === "targetSize" && originalImage) {
+                updateImageCanvas();
             }
         });
 
@@ -120,9 +134,7 @@ document.getElementById("imageInput").addEventListener("change", (e) => {
         reader.onload = (e) => {
             const img = new Image();
             img.onload = () => {
-                const originalTab = document.getElementById("originalTab");
-                originalTab.innerHTML = "";
-                originalTab.appendChild(img);
+                displayImageWithZoom(img);
                 hasInitialImage = true;
             };
             img.src = e.target.result;
@@ -131,10 +143,118 @@ document.getElementById("imageInput").addEventListener("change", (e) => {
     }
 });
 
+// Display image with zoom and pan controls
+function displayImageWithZoom(img) {
+    const originalTab = document.getElementById("originalTab");
+    originalTab.innerHTML = "";
+
+    // Ensure the tab has relative positioning for absolute positioned controls
+    originalTab.style.position = "relative";
+
+    // Store original image for cropping
+    originalImage = img;
+
+    // Get target size from input
+    const targetSize = parseInt(document.getElementById("targetSize").value) || 1000;
+
+    // Create zoomable container
+    const zoomableContainer = document.createElement("div");
+    zoomableContainer.className = "img-zoomable-container";
+    zoomableContainer.style.position = "relative";
+    zoomableContainer.style.width = targetSize + "px";
+    zoomableContainer.style.height = targetSize + "px";
+    zoomableContainer.style.margin = "20px auto";
+    zoomableContainer.style.overflow = "hidden";
+    zoomableContainer.style.cursor = "grab";
+    zoomableContainer.style.border = "1px solid #ddd";
+    zoomableContainer.style.borderRadius = "8px";
+
+    // Create content wrapper
+    const zoomableContent = document.createElement("div");
+    zoomableContent.className = "img-zoomable-content";
+    zoomableContent.style.position = "absolute";
+    zoomableContent.style.transformOrigin = "center center";
+
+    // Calculate scale to fit image in square
+    const scale = Math.min(targetSize / img.width, targetSize / img.height);
+    const scaledWidth = img.width * scale;
+    const scaledHeight = img.height * scale;
+
+    // Center the image
+    const offsetX = (targetSize - scaledWidth) / 2;
+    const offsetY = (targetSize - scaledHeight) / 2;
+
+    // Store display info for cropping
+    imageDisplayInfo = {
+        targetSize,
+        scale,
+        scaledWidth,
+        scaledHeight,
+        offsetX,
+        offsetY
+    };
+
+    // Create canvas for the image
+    const canvas = document.createElement("canvas");
+    canvas.width = targetSize;
+    canvas.height = targetSize;
+    canvas.style.width = targetSize + "px";
+    canvas.style.height = targetSize + "px";
+
+    const ctx = canvas.getContext("2d");
+    ctx.fillStyle = "white";
+    ctx.fillRect(0, 0, targetSize, targetSize);
+    ctx.drawImage(img, offsetX, offsetY, scaledWidth, scaledHeight);
+
+    // Add circular lightbox effect
+    addCircularLightboxEffect(ctx, targetSize);
+
+    zoomableContent.appendChild(canvas);
+    zoomableContent.dataset.originalImg = img.src;
+    zoomableContent.dataset.imgWidth = img.width;
+    zoomableContent.dataset.imgHeight = img.height;
+
+    // Add zoom controls
+    const zoomControls = document.createElement("div");
+    zoomControls.className = "zoom-controls";
+    zoomControls.innerHTML = `
+        <button class="zoom-btn" onclick="adjustImgZoom(0.2)">+</button>
+        <button class="zoom-btn" onclick="adjustImgZoom(-0.2)">−</button>
+        <button class="zoom-btn" onclick="resetImgZoom()">Reset</button>
+    `;
+
+    // Add zoom info
+    const zoomInfo = document.createElement("div");
+    zoomInfo.className = "zoom-info";
+    zoomInfo.id = "imgZoomInfo";
+    zoomInfo.textContent = "Zoom: 100% | Cmd+Scroll to zoom, Drag to pan";
+
+    zoomableContainer.appendChild(zoomableContent);
+    originalTab.appendChild(zoomableContainer);
+
+    // Append zoom controls and info to the main tab area (not the small container)
+    originalTab.appendChild(zoomControls);
+    originalTab.appendChild(zoomInfo);
+
+    // Setup zoom and pan for image
+    setupImageZoomAndPan(zoomableContainer, zoomableContent, canvas, img, targetSize);
+
+    // Reset zoom/pan when switching tabs or regenerating
+    imgZoomLevel = 1;
+    imgPanX = 0;
+    imgPanY = 0;
+}
+
 // Schedule auto-regeneration with debouncing
 function scheduleAutoRegeneration() {
     const autoRegenerate = document.getElementById("autoRegenerate");
     if (!autoRegenerate.checked || !hasInitialImage || isProcessing) {
+        return;
+    }
+
+    // Only regenerate if the SVG tab is active
+    const resultTab = document.getElementById("resultTab");
+    if (!resultTab || !resultTab.classList.contains("active")) {
         return;
     }
 
@@ -504,6 +624,18 @@ async function generateStringArt() {
 
 async function loadImageData(file) {
     return new Promise((resolve, reject) => {
+        // If we have an original image and display info, use the cropped version
+        if (originalImage && imageDisplayInfo) {
+            try {
+                const croppedImageData = getCroppedImageData();
+                resolve(croppedImageData);
+                return;
+            } catch (error) {
+                console.warn("Failed to get cropped image data, falling back to full image:", error);
+            }
+        }
+
+        // Fallback to original behavior
         const img = new Image();
         img.onload = () => {
             try {
@@ -893,6 +1025,348 @@ function resetZoom() {
     if (content) {
         updateTransform(content);
     }
+}
+
+// Setup zoom and pan for image
+function setupImageZoomAndPan(container, _content, canvas, img, targetSize) {
+    const ctx = canvas.getContext("2d");
+
+    // Function to redraw image with current zoom and pan
+    const redrawImage = () => {
+        ctx.save();
+        ctx.clearRect(0, 0, targetSize, targetSize);
+        ctx.fillStyle = "white";
+        ctx.fillRect(0, 0, targetSize, targetSize);
+
+        // Apply transformations
+        ctx.translate(targetSize / 2, targetSize / 2);
+        ctx.translate(imgPanX, imgPanY);
+        ctx.scale(imgZoomLevel, imgZoomLevel);
+        ctx.translate(-targetSize / 2, -targetSize / 2);
+
+        // Calculate scale to fit image in square
+        const scale = Math.min(targetSize / img.width, targetSize / img.height);
+        const scaledWidth = img.width * scale;
+        const scaledHeight = img.height * scale;
+        const offsetX = (targetSize - scaledWidth) / 2;
+        const offsetY = (targetSize - scaledHeight) / 2;
+
+        ctx.drawImage(img, offsetX, offsetY, scaledWidth, scaledHeight);
+        ctx.restore();
+
+        // Add circular lightbox effect
+        addCircularLightboxEffect(ctx, targetSize);
+
+        // Update zoom info
+        const zoomInfo = document.getElementById("imgZoomInfo");
+        if (zoomInfo) {
+            zoomInfo.textContent = `Zoom: ${Math.round(imgZoomLevel * 100)}% | Cmd+Scroll to zoom, Drag to pan`;
+        }
+    };
+
+    // Wheel event for zoom (Ctrl+scroll) and pan (normal scroll)
+    container.addEventListener("wheel", (e) => {
+        e.preventDefault();
+
+        if (e.ctrlKey || e.metaKey) {
+            // Zoom functionality
+            const delta = e.deltaY > 0 ? -0.1 : 0.1;
+            const rect = container.getBoundingClientRect();
+            const mouseX = e.clientX - rect.left;
+            const mouseY = e.clientY - rect.top;
+
+            adjustImgZoomAt(delta, mouseX, mouseY, redrawImage);
+        } else {
+            // Pan functionality
+            const panSpeed = 2;
+            imgPanX -= e.deltaX * panSpeed / imgZoomLevel;
+            imgPanY -= e.deltaY * panSpeed / imgZoomLevel;
+            redrawImage();
+        }
+    });
+
+    // Mouse drag for panning
+    let isDragging = false;
+    let startX = 0;
+    let startY = 0;
+    let startPanX = 0;
+    let startPanY = 0;
+
+    container.addEventListener("mousedown", (e) => {
+        isDragging = true;
+        startX = e.clientX;
+        startY = e.clientY;
+        startPanX = imgPanX;
+        startPanY = imgPanY;
+        container.style.cursor = "grabbing";
+    });
+
+    document.addEventListener("mousemove", (e) => {
+        if (!isDragging || !container.contains(e.target)) return;
+
+        const deltaX = e.clientX - startX;
+        const deltaY = e.clientY - startY;
+
+        imgPanX = startPanX + deltaX / imgZoomLevel;
+        imgPanY = startPanY + deltaY / imgZoomLevel;
+        redrawImage();
+    });
+
+    document.addEventListener("mouseup", () => {
+        if (isDragging) {
+            isDragging = false;
+            container.style.cursor = "grab";
+        }
+    });
+}
+
+// Adjust image zoom level
+// biome-ignore lint/correctness/noUnusedVariables: called from html
+function adjustImgZoom(delta) {
+    imgZoomLevel = Math.max(0.1, Math.min(5, imgZoomLevel + delta));
+
+    // Find the canvas and redraw
+    const canvas = document.querySelector(".img-zoomable-content canvas");
+    if (canvas) {
+        const img = new Image();
+        const content = canvas.parentElement;
+        img.onload = () => {
+            const ctx = canvas.getContext("2d");
+            const targetSize = parseInt(canvas.width);
+
+            ctx.save();
+            ctx.clearRect(0, 0, targetSize, targetSize);
+            ctx.fillStyle = "white";
+            ctx.fillRect(0, 0, targetSize, targetSize);
+
+            ctx.translate(targetSize / 2, targetSize / 2);
+            ctx.translate(imgPanX, imgPanY);
+            ctx.scale(imgZoomLevel, imgZoomLevel);
+            ctx.translate(-targetSize / 2, -targetSize / 2);
+
+            const scale = Math.min(targetSize / img.width, targetSize / img.height);
+            const scaledWidth = img.width * scale;
+            const scaledHeight = img.height * scale;
+            const offsetX = (targetSize - scaledWidth) / 2;
+            const offsetY = (targetSize - scaledHeight) / 2;
+
+            ctx.drawImage(img, offsetX, offsetY, scaledWidth, scaledHeight);
+            ctx.restore();
+
+            // Add circular lightbox effect
+            addCircularLightboxEffect(ctx, targetSize);
+
+            // Update zoom info
+            const zoomInfo = document.getElementById("imgZoomInfo");
+            if (zoomInfo) {
+                zoomInfo.textContent = `Zoom: ${Math.round(imgZoomLevel * 100)}% | Cmd+Scroll to zoom, Drag to pan`;
+            }
+        };
+        img.src = content.dataset.originalImg;
+    }
+}
+
+// Adjust image zoom at specific point
+function adjustImgZoomAt(delta, mouseX, mouseY, redrawCallback) {
+    const oldZoom = imgZoomLevel;
+    imgZoomLevel = Math.max(0.1, Math.min(5, imgZoomLevel + delta));
+
+    // Adjust pan to zoom into the mouse position
+    const zoomFactor = imgZoomLevel / oldZoom;
+    const canvas = document.querySelector(".img-zoomable-content canvas");
+    if (canvas) {
+        const targetSize = parseInt(canvas.width);
+        const centerX = targetSize / 2;
+        const centerY = targetSize / 2;
+
+        imgPanX = (imgPanX - (mouseX - centerX) / oldZoom) * zoomFactor + (mouseX - centerX) / imgZoomLevel;
+        imgPanY = (imgPanY - (mouseY - centerY) / oldZoom) * zoomFactor + (mouseY - centerY) / imgZoomLevel;
+    }
+
+    if (redrawCallback) {
+        redrawCallback();
+    }
+}
+
+// Reset image zoom and pan
+// biome-ignore lint/correctness/noUnusedVariables: called from html
+function resetImgZoom() {
+    imgZoomLevel = 1;
+    imgPanX = 0;
+    imgPanY = 0;
+
+    // Redraw the image
+    const canvas = document.querySelector(".img-zoomable-content canvas");
+    if (canvas) {
+        adjustImgZoom(0); // This will trigger a redraw with current values
+    }
+}
+
+// Update image canvas when targetSize changes
+function updateImageCanvas() {
+    if (!originalImage) return;
+
+    const newTargetSize = parseInt(document.getElementById("targetSize").value) || 1000;
+
+    // Update stored display info
+    if (imageDisplayInfo) {
+        const scale = Math.min(newTargetSize / originalImage.width, newTargetSize / originalImage.height);
+        const scaledWidth = originalImage.width * scale;
+        const scaledHeight = originalImage.height * scale;
+        const offsetX = (newTargetSize - scaledWidth) / 2;
+        const offsetY = (newTargetSize - scaledHeight) / 2;
+
+        imageDisplayInfo = {
+            targetSize: newTargetSize,
+            scale,
+            scaledWidth,
+            scaledHeight,
+            offsetX,
+            offsetY
+        };
+    }
+
+    // Find the current image container and update it
+    const container = document.querySelector(".img-zoomable-container");
+    const canvas = document.querySelector(".img-zoomable-content canvas");
+
+    if (container && canvas) {
+        // Update container size
+        container.style.width = `${newTargetSize}px`;
+        container.style.height = `${newTargetSize}px`;
+
+        // Update canvas size
+        canvas.width = newTargetSize;
+        canvas.height = newTargetSize;
+        canvas.style.width = `${newTargetSize}px`;
+        canvas.style.height = `${newTargetSize}px`;
+
+        // Redraw the image with new size
+        const ctx = canvas.getContext("2d");
+        ctx.save();
+        ctx.clearRect(0, 0, newTargetSize, newTargetSize);
+        ctx.fillStyle = "white";
+        ctx.fillRect(0, 0, newTargetSize, newTargetSize);
+
+        // Apply current transformations
+        ctx.translate(newTargetSize / 2, newTargetSize / 2);
+        ctx.translate(imgPanX, imgPanY);
+        ctx.scale(imgZoomLevel, imgZoomLevel);
+        ctx.translate(-newTargetSize / 2, -newTargetSize / 2);
+
+        // Draw image with new scaling
+        if (imageDisplayInfo) {
+            const { scaledWidth, scaledHeight, offsetX, offsetY } = imageDisplayInfo;
+            ctx.drawImage(originalImage, offsetX, offsetY, scaledWidth, scaledHeight);
+        }
+        ctx.restore();
+
+        // Add circular lightbox effect
+        addCircularLightboxEffect(ctx, newTargetSize);
+
+        // Update zoom info
+        const zoomInfo = document.getElementById("imgZoomInfo");
+        if (zoomInfo) {
+            zoomInfo.textContent = `Zoom: ${Math.round(imgZoomLevel * 100)}% | Cmd+Scroll to zoom, Drag to pan`;
+        }
+    }
+}
+
+// Add circular lightbox effect to highlight the string art generation area
+function addCircularLightboxEffect(ctx, size) {
+    // Save the current context state
+    ctx.save();
+
+    // Create a circular clipping path for the lightbox effect
+    const centerX = size / 2;
+    const centerY = size / 2;
+    const radius = (size / 2) - 1; // Slightly smaller than half to match string art circle
+
+    // Create overlay that covers everything
+    ctx.fillStyle = "rgba(0, 0, 0, 0.3)"; // Semi-transparent dark overlay
+    ctx.fillRect(0, 0, size, size);
+
+    // Use composite operation to "cut out" the circle
+    ctx.globalCompositeOperation = "destination-out";
+    ctx.beginPath();
+    ctx.arc(centerX, centerY, radius, 0, 2 * Math.PI);
+    ctx.fill();
+
+    // Restore the context state
+    ctx.restore();
+}
+
+// Get cropped image data based on current pan/zoom state
+function getCroppedImageData() {
+    if (!originalImage || !imageDisplayInfo) {
+        throw new Error("No original image or display info available");
+    }
+
+    const { targetSize, scaledWidth, scaledHeight, offsetX, offsetY } = imageDisplayInfo;
+
+    // Create a temporary canvas to extract the visible portion
+    const tempCanvas = document.createElement("canvas");
+    const tempCtx = tempCanvas.getContext("2d");
+
+    // Set canvas size to target size (square)
+    tempCanvas.width = targetSize;
+    tempCanvas.height = targetSize;
+
+    // Fill with white background
+    tempCtx.fillStyle = "white";
+    tempCtx.fillRect(0, 0, targetSize, targetSize);
+
+    // Apply the same transformations as the display
+    tempCtx.save();
+    tempCtx.translate(targetSize / 2, targetSize / 2);
+    tempCtx.translate(imgPanX, imgPanY);
+    tempCtx.scale(imgZoomLevel, imgZoomLevel);
+    tempCtx.translate(-targetSize / 2, -targetSize / 2);
+
+    // Draw the image with the same scaling and positioning as display
+    tempCtx.drawImage(originalImage, offsetX, offsetY, scaledWidth, scaledHeight);
+    tempCtx.restore();
+
+    // Get the image data from the canvas
+    const imageData = tempCtx.getImageData(0, 0, targetSize, targetSize);
+    const data = imageData.data;
+
+    // Check if WASM module is ready
+    if (!stringArtModule || !stringArtModule._malloc) {
+        throw new Error("WASM module not ready");
+    }
+
+    // Allocate memory in WASM heap
+    const dataPtr = stringArtModule._malloc(data.length);
+    if (dataPtr === 0) {
+        throw new Error("Failed to allocate WASM memory");
+    }
+
+    // Copy data to WASM memory
+    let wasmArray;
+    if (stringArtModule.HEAPU8) {
+        wasmArray = new Uint8Array(
+            stringArtModule.HEAPU8.buffer,
+            dataPtr,
+            data.length,
+        );
+    } else {
+        // Fallback: create a view directly from the exported memory
+        const memory = stringArtModule.wasmMemory || stringArtModule.memory;
+        if (memory?.buffer) {
+            wasmArray = new Uint8Array(memory.buffer, dataPtr, data.length);
+        } else {
+            throw new Error("Cannot access WASM memory");
+        }
+    }
+    wasmArray.set(data);
+
+    return {
+        dataPtr: dataPtr,
+        width: targetSize,
+        height: targetSize,
+        channels: 4, // RGBA
+    };
 }
 
 // Update CSS transform
