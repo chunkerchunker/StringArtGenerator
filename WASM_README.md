@@ -34,6 +34,8 @@ To build the WASM version, you need:
 1. **Serve the files** using a local HTTP server (required due to CORS restrictions):
 
    ```bash
+   cd demo
+
    # Using Python 3
    python3 -m http.server 8000
 
@@ -45,7 +47,7 @@ To build the WASM version, you need:
 
 2. **Open the demo** in your browser:
 
-<http://localhost:8000/stringart-demo.html>
+<http://localhost:8000/stringart.html>
 
 ## Usage
 
