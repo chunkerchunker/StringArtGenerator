@@ -136,6 +136,8 @@ document.getElementById("imageInput").addEventListener("change", (e) => {
             img.onload = () => {
                 displayImageWithZoom(img);
                 hasInitialImage = true;
+                // Switch to Original Image tab after loading
+                switchTabProgrammatically("original");
             };
             img.src = e.target.result;
         };
