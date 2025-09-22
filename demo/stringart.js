@@ -739,6 +739,14 @@ function updateSVGOutput() {
         downloadSVGWithStyles(svg);
     };
     downloadSection.appendChild(downloadBtn);
+
+    const downloadPinsBtn = document.createElement("button");
+    downloadPinsBtn.className = "download-btn";
+    downloadPinsBtn.textContent = "Download Pin List";
+    downloadPinsBtn.onclick = () => {
+        downloadPinList();
+    };
+    downloadSection.appendChild(downloadPinsBtn);
     zoomableContainer.appendChild(downloadSection);
 
     resultTab.appendChild(zoomableContainer);
@@ -898,6 +906,35 @@ function updateTransform(content) {
             zoomInfo.textContent = `Zoom: ${Math.round(zoomLevel * 100)}% | Ctrl+Scroll to zoom, Scroll to pan`;
         }
     }
+}
+
+// Download pin list as text file
+function downloadPinList() {
+    if (!currentLineSequence || currentLineSequence.length === 0) {
+        alert("No pin data available to download");
+        return;
+    }
+
+    // Generate the output filename
+    const fileInput = document.getElementById("imageInput");
+    if (!fileInput.files || fileInput.files.length === 0) {
+        alert("No input file selected");
+        return;
+    }
+
+    const parts = fileInput.files[0].name.split(".");
+    const baseName = parts.slice(0, -1).join(".");
+    const outname = `${baseName}-pins.txt`;
+
+    // Create text content with one pin number per line
+    const pinListContent = currentLineSequence.join("\n");
+
+    // Create and download the text file
+    const blob = new Blob([pinListContent], { type: "text/plain" });
+    const link = document.createElement("a");
+    link.download = outname;
+    link.href = URL.createObjectURL(blob);
+    link.click();
 }
 
 // Download SVG with embedded styles for standalone viewing

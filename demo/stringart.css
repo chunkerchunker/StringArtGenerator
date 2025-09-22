@@ -322,8 +322,8 @@ input[type="range"] {
     border-radius: 4px;
     font-size: 14px;
     cursor: pointer;
-    margin-top: 10px;
     transition: background-color 0.3s;
+    width: 200px;
 }
 
 .download-btn:hover {
@@ -333,6 +333,10 @@ input[type="range"] {
 .download-section {
     margin-top: 20px;
     text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
 }
 
 @media (max-width: 768px) {
