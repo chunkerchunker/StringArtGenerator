@@ -175,23 +175,32 @@ function displayImageWithZoom(img) {
     zoomableContent.style.position = "absolute";
     zoomableContent.style.transformOrigin = "center center";
 
-    // Calculate scale to fit image in square
-    const scale = Math.min(targetSize / img.width, targetSize / img.height);
-    const scaledWidth = img.width * scale;
-    const scaledHeight = img.height * scale;
+    // Calculate scale to fit image in square (this becomes our base scale)
+    const baseScale = Math.min(targetSize / img.width, targetSize / img.height);
+    const baseScaledWidth = img.width * baseScale;
+    const baseScaledHeight = img.height * baseScale;
+
+    // Calculate minimum zoom to fill entire targetSize (both dimensions)
+    const minZoomToFillWidth = targetSize / baseScaledWidth;
+    const minZoomToFillHeight = targetSize / baseScaledHeight;
+    const minZoomLevel = Math.max(minZoomToFillWidth, minZoomToFillHeight);
+
+    // Set initial zoom to minimum required
+    imgZoomLevel = minZoomLevel;
 
     // Center the image
-    const offsetX = (targetSize - scaledWidth) / 2;
-    const offsetY = (targetSize - scaledHeight) / 2;
+    const offsetX = (targetSize - baseScaledWidth) / 2;
+    const offsetY = (targetSize - baseScaledHeight) / 2;
 
     // Store display info for cropping
     imageDisplayInfo = {
         targetSize,
-        scale,
-        scaledWidth,
-        scaledHeight,
+        baseScale,
+        baseScaledWidth,
+        baseScaledHeight,
         offsetX,
-        offsetY
+        offsetY,
+        minZoomLevel
     };
 
     // Create canvas for the image
@@ -204,7 +213,15 @@ function displayImageWithZoom(img) {
     const ctx = canvas.getContext("2d");
     ctx.fillStyle = "white";
     ctx.fillRect(0, 0, targetSize, targetSize);
-    ctx.drawImage(img, offsetX, offsetY, scaledWidth, scaledHeight);
+
+    // Apply zoom transformation and draw image
+    ctx.save();
+    ctx.translate(targetSize / 2, targetSize / 2);
+    ctx.translate(imgPanX, imgPanY);
+    ctx.scale(imgZoomLevel, imgZoomLevel);
+    ctx.translate(-targetSize / 2, -targetSize / 2);
+    ctx.drawImage(img, offsetX, offsetY, baseScaledWidth, baseScaledHeight);
+    ctx.restore();
 
     // Add circular lightbox effect
     addCircularLightboxEffect(ctx, targetSize);
@@ -239,8 +256,7 @@ function displayImageWithZoom(img) {
     // Setup zoom and pan for image
     setupImageZoomAndPan(zoomableContainer, zoomableContent, canvas, img, targetSize);
 
-    // Reset zoom/pan when switching tabs or regenerating
-    imgZoomLevel = 1;
+    // Reset pan when switching tabs or regenerating (zoom is already set to minimum)
     imgPanX = 0;
     imgPanY = 0;
 }
@@ -1044,14 +1060,11 @@ function setupImageZoomAndPan(container, _content, canvas, img, targetSize) {
         ctx.scale(imgZoomLevel, imgZoomLevel);
         ctx.translate(-targetSize / 2, -targetSize / 2);
 
-        // Calculate scale to fit image in square
-        const scale = Math.min(targetSize / img.width, targetSize / img.height);
-        const scaledWidth = img.width * scale;
-        const scaledHeight = img.height * scale;
-        const offsetX = (targetSize - scaledWidth) / 2;
-        const offsetY = (targetSize - scaledHeight) / 2;
-
-        ctx.drawImage(img, offsetX, offsetY, scaledWidth, scaledHeight);
+        // Use stored display info for consistent scaling
+        if (imageDisplayInfo) {
+            const { baseScaledWidth, baseScaledHeight, offsetX, offsetY } = imageDisplayInfo;
+            ctx.drawImage(img, offsetX, offsetY, baseScaledWidth, baseScaledHeight);
+        }
         ctx.restore();
 
         // Add circular lightbox effect
@@ -1079,8 +1092,20 @@ function setupImageZoomAndPan(container, _content, canvas, img, targetSize) {
         } else {
             // Pan functionality
             const panSpeed = 2;
-            imgPanX -= e.deltaX * panSpeed / imgZoomLevel;
-            imgPanY -= e.deltaY * panSpeed / imgZoomLevel;
+            const newPanX = imgPanX - e.deltaX * panSpeed / imgZoomLevel;
+            const newPanY = imgPanY - e.deltaY * panSpeed / imgZoomLevel;
+
+            // Apply pan constraints
+            if (imageDisplayInfo) {
+                const { baseScaledWidth, baseScaledHeight } = imageDisplayInfo;
+                const constrained = constrainPan(newPanX, newPanY, targetSize, imgZoomLevel, baseScaledWidth, baseScaledHeight);
+                imgPanX = constrained.x;
+                imgPanY = constrained.y;
+            } else {
+                imgPanX = newPanX;
+                imgPanY = newPanY;
+            }
+
             redrawImage();
         }
     });
@@ -1107,8 +1132,20 @@ function setupImageZoomAndPan(container, _content, canvas, img, targetSize) {
         const deltaX = e.clientX - startX;
         const deltaY = e.clientY - startY;
 
-        imgPanX = startPanX + deltaX / imgZoomLevel;
-        imgPanY = startPanY + deltaY / imgZoomLevel;
+        const newPanX = startPanX + deltaX / imgZoomLevel;
+        const newPanY = startPanY + deltaY / imgZoomLevel;
+
+        // Apply pan constraints
+        if (imageDisplayInfo) {
+            const { baseScaledWidth, baseScaledHeight } = imageDisplayInfo;
+            const constrained = constrainPan(newPanX, newPanY, targetSize, imgZoomLevel, baseScaledWidth, baseScaledHeight);
+            imgPanX = constrained.x;
+            imgPanY = constrained.y;
+        } else {
+            imgPanX = newPanX;
+            imgPanY = newPanY;
+        }
+
         redrawImage();
     });
 
@@ -1123,7 +1160,8 @@ function setupImageZoomAndPan(container, _content, canvas, img, targetSize) {
 // Adjust image zoom level
 // biome-ignore lint/correctness/noUnusedVariables: called from html
 function adjustImgZoom(delta) {
-    imgZoomLevel = Math.max(0.1, Math.min(5, imgZoomLevel + delta));
+    const minZoom = imageDisplayInfo ? imageDisplayInfo.minZoomLevel : 1;
+    imgZoomLevel = Math.max(minZoom, Math.min(5, imgZoomLevel + delta));
 
     // Find the canvas and redraw
     const canvas = document.querySelector(".img-zoomable-content canvas");
@@ -1144,13 +1182,11 @@ function adjustImgZoom(delta) {
             ctx.scale(imgZoomLevel, imgZoomLevel);
             ctx.translate(-targetSize / 2, -targetSize / 2);
 
-            const scale = Math.min(targetSize / img.width, targetSize / img.height);
-            const scaledWidth = img.width * scale;
-            const scaledHeight = img.height * scale;
-            const offsetX = (targetSize - scaledWidth) / 2;
-            const offsetY = (targetSize - scaledHeight) / 2;
-
-            ctx.drawImage(img, offsetX, offsetY, scaledWidth, scaledHeight);
+            // Use stored display info for consistent scaling
+            if (imageDisplayInfo) {
+                const { baseScaledWidth, baseScaledHeight, offsetX, offsetY } = imageDisplayInfo;
+                ctx.drawImage(img, offsetX, offsetY, baseScaledWidth, baseScaledHeight);
+            }
             ctx.restore();
 
             // Add circular lightbox effect
@@ -1169,7 +1205,8 @@ function adjustImgZoom(delta) {
 // Adjust image zoom at specific point
 function adjustImgZoomAt(delta, mouseX, mouseY, redrawCallback) {
     const oldZoom = imgZoomLevel;
-    imgZoomLevel = Math.max(0.1, Math.min(5, imgZoomLevel + delta));
+    const minZoom = imageDisplayInfo ? imageDisplayInfo.minZoomLevel : 1;
+    imgZoomLevel = Math.max(minZoom, Math.min(5, imgZoomLevel + delta));
 
     // Adjust pan to zoom into the mouse position
     const zoomFactor = imgZoomLevel / oldZoom;
@@ -1179,8 +1216,19 @@ function adjustImgZoomAt(delta, mouseX, mouseY, redrawCallback) {
         const centerX = targetSize / 2;
         const centerY = targetSize / 2;
 
-        imgPanX = (imgPanX - (mouseX - centerX) / oldZoom) * zoomFactor + (mouseX - centerX) / imgZoomLevel;
-        imgPanY = (imgPanY - (mouseY - centerY) / oldZoom) * zoomFactor + (mouseY - centerY) / imgZoomLevel;
+        let newPanX = (imgPanX - (mouseX - centerX) / oldZoom) * zoomFactor + (mouseX - centerX) / imgZoomLevel;
+        let newPanY = (imgPanY - (mouseY - centerY) / oldZoom) * zoomFactor + (mouseY - centerY) / imgZoomLevel;
+
+        // Apply pan constraints after zoom adjustment
+        if (imageDisplayInfo) {
+            const { baseScaledWidth, baseScaledHeight } = imageDisplayInfo;
+            const constrained = constrainPan(newPanX, newPanY, targetSize, imgZoomLevel, baseScaledWidth, baseScaledHeight);
+            imgPanX = constrained.x;
+            imgPanY = constrained.y;
+        } else {
+            imgPanX = newPanX;
+            imgPanY = newPanY;
+        }
     }
 
     if (redrawCallback) {
@@ -1191,7 +1239,8 @@ function adjustImgZoomAt(delta, mouseX, mouseY, redrawCallback) {
 // Reset image zoom and pan
 // biome-ignore lint/correctness/noUnusedVariables: called from html
 function resetImgZoom() {
-    imgZoomLevel = 1;
+    // Reset to minimum zoom level (fills targetSize dimensions)
+    imgZoomLevel = imageDisplayInfo ? imageDisplayInfo.minZoomLevel : 1;
     imgPanX = 0;
     imgPanY = 0;
 
@@ -1210,20 +1259,32 @@ function updateImageCanvas() {
 
     // Update stored display info
     if (imageDisplayInfo) {
-        const scale = Math.min(newTargetSize / originalImage.width, newTargetSize / originalImage.height);
-        const scaledWidth = originalImage.width * scale;
-        const scaledHeight = originalImage.height * scale;
-        const offsetX = (newTargetSize - scaledWidth) / 2;
-        const offsetY = (newTargetSize - scaledHeight) / 2;
+        const baseScale = Math.min(newTargetSize / originalImage.width, newTargetSize / originalImage.height);
+        const baseScaledWidth = originalImage.width * baseScale;
+        const baseScaledHeight = originalImage.height * baseScale;
+
+        // Recalculate minimum zoom for new target size
+        const minZoomToFillWidth = newTargetSize / baseScaledWidth;
+        const minZoomToFillHeight = newTargetSize / baseScaledHeight;
+        const minZoomLevel = Math.max(minZoomToFillWidth, minZoomToFillHeight);
+
+        const offsetX = (newTargetSize - baseScaledWidth) / 2;
+        const offsetY = (newTargetSize - baseScaledHeight) / 2;
 
         imageDisplayInfo = {
             targetSize: newTargetSize,
-            scale,
-            scaledWidth,
-            scaledHeight,
+            baseScale,
+            baseScaledWidth,
+            baseScaledHeight,
             offsetX,
-            offsetY
+            offsetY,
+            minZoomLevel
         };
+
+        // Ensure current zoom level meets new minimum
+        if (imgZoomLevel < minZoomLevel) {
+            imgZoomLevel = minZoomLevel;
+        }
     }
 
     // Find the current image container and update it
@@ -1256,8 +1317,8 @@ function updateImageCanvas() {
 
         // Draw image with new scaling
         if (imageDisplayInfo) {
-            const { scaledWidth, scaledHeight, offsetX, offsetY } = imageDisplayInfo;
-            ctx.drawImage(originalImage, offsetX, offsetY, scaledWidth, scaledHeight);
+            const { baseScaledWidth, baseScaledHeight, offsetX, offsetY } = imageDisplayInfo;
+            ctx.drawImage(originalImage, offsetX, offsetY, baseScaledWidth, baseScaledHeight);
         }
         ctx.restore();
 
@@ -1270,6 +1331,34 @@ function updateImageCanvas() {
             zoomInfo.textContent = `Zoom: ${Math.round(imgZoomLevel * 100)}% | Cmd+Scroll to zoom, Drag to pan`;
         }
     }
+}
+
+// Calculate pan limits to ensure image always covers the canvas
+function calculatePanLimits(targetSize, zoomLevel, baseScaledWidth, baseScaledHeight) {
+    // Calculate the actual displayed size of the image at current zoom
+    const displayedWidth = baseScaledWidth * zoomLevel;
+    const displayedHeight = baseScaledHeight * zoomLevel;
+
+    // Calculate how much the image can move while still covering the canvas
+    const maxPanX = Math.max(0, (displayedWidth - targetSize) / 2);
+    const maxPanY = Math.max(0, (displayedHeight - targetSize) / 2);
+
+    return {
+        minX: -maxPanX,
+        maxX: maxPanX,
+        minY: -maxPanY,
+        maxY: maxPanY
+    };
+}
+
+// Constrain pan values to ensure full canvas coverage
+function constrainPan(panX, panY, targetSize, zoomLevel, baseScaledWidth, baseScaledHeight) {
+    const limits = calculatePanLimits(targetSize, zoomLevel, baseScaledWidth, baseScaledHeight);
+
+    return {
+        x: Math.max(limits.minX, Math.min(limits.maxX, panX)),
+        y: Math.max(limits.minY, Math.min(limits.maxY, panY))
+    };
 }
 
 // Add circular lightbox effect to highlight the string art generation area
@@ -1302,7 +1391,7 @@ function getCroppedImageData() {
         throw new Error("No original image or display info available");
     }
 
-    const { targetSize, scaledWidth, scaledHeight, offsetX, offsetY } = imageDisplayInfo;
+    const { targetSize, baseScaledWidth, baseScaledHeight, offsetX, offsetY } = imageDisplayInfo;
 
     // Create a temporary canvas to extract the visible portion
     const tempCanvas = document.createElement("canvas");
@@ -1324,7 +1413,7 @@ function getCroppedImageData() {
     tempCtx.translate(-targetSize / 2, -targetSize / 2);
 
     // Draw the image with the same scaling and positioning as display
-    tempCtx.drawImage(originalImage, offsetX, offsetY, scaledWidth, scaledHeight);
+    tempCtx.drawImage(originalImage, offsetX, offsetY, baseScaledWidth, baseScaledHeight);
     tempCtx.restore();
 
     // Get the image data from the canvas
