@@ -47,7 +47,7 @@ To build the WASM version, you need:
 
 2. **Open the demo** in your browser:
 
-<http://localhost:8000/stringart.html>
+<http://localhost:8000/index.html>
 
 ## Usage
 
