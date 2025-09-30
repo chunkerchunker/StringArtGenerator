@@ -48,8 +48,14 @@
 
                 <div class="control-group">
                     <label for="lineWeight">Line Weight:</label>
-                    <input type="range" id="lineWeight" min="1" max="200" value="20">
-                    <div class="range-value" id="lineWeightValue">20</div>
+                    <div style="display: flex; align-items: center; gap: 10px;">
+                        <input type="range" id="lineWeight" min="1" max="200" value="20" style="flex: 1;">
+                        <div class="range-value" id="lineWeightValue" style="min-width: 40px;">20</div>
+                        <label style="display: flex; align-items: center; gap: 5px; margin: 0;">
+                            <input type="checkbox" id="autoLineWeight">
+                            <span>Auto</span>
+                        </label>
+                    </div>
                 </div>
 
                 <div class="control-group">

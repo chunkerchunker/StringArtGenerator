@@ -2,6 +2,7 @@ var StringArtModule = null;
 let stringArtModule = null;
 let isProcessing = false;
 let runCount = 0;
+let isAutoCancelled = false;
 
 // Global storage for generated string art data
 let currentLineSequence = null;
@@ -74,6 +75,26 @@ document.addEventListener("DOMContentLoaded", () => {
                 scheduleAutoRegeneration();
             }
         });
+    });
+
+    // Setup auto line weight checkbox
+    const autoLineWeightCheckbox = document.getElementById("autoLineWeight");
+    const lineWeightSlider = document.getElementById("lineWeight");
+    const lineWeightValue = document.getElementById("lineWeightValue");
+
+    autoLineWeightCheckbox.addEventListener("change", () => {
+        if (autoLineWeightCheckbox.checked) {
+            lineWeightSlider.disabled = true;
+            lineWeightValue.textContent = "Auto";
+            lineWeightSlider.style.opacity = "0.5";
+            // Only trigger auto-regeneration when enabling auto mode
+            scheduleAutoRegeneration();
+        } else {
+            lineWeightSlider.disabled = false;
+            lineWeightValue.textContent = lineWeightSlider.value;
+            lineWeightSlider.style.opacity = "1";
+            // Don't regenerate when disabling auto mode
+        }
     });
 
     // Load the WASM module
@@ -294,6 +315,271 @@ function scheduleAutoRegeneration() {
     }, 500); // 500ms delay after user releases slider
 }
 
+// Binary search for optimal line weight
+async function generateWithAutoLineWeight() {
+    if (isProcessing) {
+        return;
+    }
+
+    const fileInput = document.getElementById("imageInput");
+    if (!fileInput.files[0]) {
+        alert("Please select an image file first!");
+        return;
+    }
+
+    if (!stringArtModule || !stringArtModule._malloc || !stringArtModule.ccall) {
+        showStatus("WASM module not ready. Please wait and try again.", "error");
+        return;
+    }
+
+    // Ensure HEAPU8 is ready
+    if (!stringArtModule.HEAPU8) {
+        try {
+            const testPtr = stringArtModule._malloc(1);
+            if (testPtr !== 0) {
+                stringArtModule._free(testPtr);
+            }
+        } catch (e) {
+            console.log("Error during memory test:", e);
+        }
+
+        if (!stringArtModule.HEAPU8) {
+            showStatus("WASM memory not ready. Please try again.", "error");
+            return;
+        }
+    }
+
+    isProcessing = true;
+    isAutoCancelled = false;
+    const generateBtn = document.getElementById("generateBtn");
+
+    // Set up cancellation handler (define before try block for finally access)
+    const cancelHandler = () => {
+        isAutoCancelled = true;
+        generateBtn.textContent = "Cancelling...";
+        generateBtn.disabled = true;
+    };
+
+    generateBtn.disabled = false; // Keep enabled for cancellation
+    generateBtn.textContent = "Cancel auto-generation";
+    generateBtn.addEventListener("click", cancelHandler);
+
+    // Clear previous generation data
+    currentLineSequence = null;
+    currentPinCount = 0;
+    currentLineCount = 0;
+
+    // Clear any pending auto-regeneration
+    if (regenerationTimeout) {
+        clearTimeout(regenerationTimeout);
+        regenerationTimeout = null;
+    }
+
+    // Disable all controls during binary search
+    const controls = [
+        "pins", "maxLines", "targetSize", "minDistance", "outputSize",
+        "lineWeight", "autoLineWeight", "autoRegenerate", "imageInput"
+    ];
+    controls.forEach(id => {
+        const element = document.getElementById(id);
+        if (element) element.disabled = true;
+    });
+
+    try {
+        showStatus("Starting auto line weight search...", "loading");
+        showProgress(0);
+
+        // Get parameters
+        const pins = parseInt(document.getElementById("pins").value);
+        const targetMaxLines = parseInt(document.getElementById("maxLines").value);
+        const targetSize = parseInt(document.getElementById("targetSize").value);
+        const minDistance = parseInt(document.getElementById("minDistance").value);
+
+        // Load image data once
+        const file = fileInput.files[0];
+        const imageData = await loadImageData(file);
+
+        // Binary search parameters
+        // Lower weight = more lines, Higher weight = fewer lines
+        // We want to find the minimum weight that produces <= targetMaxLines
+        let low = 1;
+        let high = 200;
+        let bestWeight = 20;
+        let iteration = 0;
+        const maxIterations = 10;
+
+        console.log(`Starting binary search for target ${targetMaxLines} lines (lower weight = more lines)`);
+
+        while (low <= high && iteration < maxIterations && !isAutoCancelled) {
+            const mid = Math.floor((low + high) / 2);
+            iteration++;
+
+            showStatus(`Testing weight ${mid} (iteration ${iteration})...`, "loading");
+            showProgress((iteration / maxIterations) * 90);
+
+            // Initialize with current weight
+            const initResult = stringArtModule.ccall(
+                "initStringArt",
+                "number",
+                ["number", "number", "number", "number", "number", "number"],
+                [pins, targetMaxLines, targetSize, mid, mid, minDistance],
+            );
+
+            if (initResult < 1) {
+                throw new Error("Failed to initialize string art generator");
+            }
+
+            // Process image with current weight
+            await new Promise(resolve => setTimeout(resolve, 50)); // Small delay for UI update
+
+            const lineCount = stringArtModule.ccall(
+                "processImage",
+                "number",
+                ["number", "number", "number", "number"],
+                [imageData.dataPtr, imageData.width, imageData.height, imageData.channels],
+            );
+
+            console.log(`Weight ${mid}: ${lineCount} lines (target: ${targetMaxLines})`);
+
+            // Update the display with current result
+            if (lineCount > 0) {
+                currentLineSequence = null; // Clear to force update
+                const lineSequencePtr = stringArtModule.ccall("getLineSequence", "number", [], []);
+                const totalLineCount = stringArtModule.ccall("getLineCount", "number", [], []);
+
+                if (lineSequencePtr !== 0 && totalLineCount > 0) {
+                    const lineSequence = new Int32Array(
+                        stringArtModule.HEAPU8.buffer,
+                        lineSequencePtr,
+                        totalLineCount,
+                    );
+                    currentLineSequence = Array.from(lineSequence);
+                    currentPinCount = pins;
+                    currentLineCount = totalLineCount;
+                    updateSVGOutput();
+                }
+            }
+
+            // Update binary search bounds (lower weight = more lines)
+            if (lineCount <= targetMaxLines) {
+                // This weight produces acceptable line count, can we go lower (more lines)?
+                bestWeight = mid;
+
+                if (lineCount === targetMaxLines) {
+                    // Perfect match found
+                    console.log(`Perfect match found: weight ${mid}`);
+                    break;
+                }
+
+                // Try lower weight to get closer to target (more lines)
+                high = mid - 1;
+            } else {
+                // Too many lines, increase weight to reduce line count
+                low = mid + 1;
+            }
+        }
+
+        // Check if cancelled before final generation
+        if (isAutoCancelled) {
+            showStatus("Auto-generation cancelled", "error");
+            throw new Error("Auto-generation cancelled by user");
+        }
+
+        // Final generation with best weight
+        showStatus(`Finalizing with optimal weight ${bestWeight}...`, "loading");
+        showProgress(95);
+
+        const initResult = stringArtModule.ccall(
+            "initStringArt",
+            "number",
+            ["number", "number", "number", "number", "number", "number"],
+            [pins, targetMaxLines, targetSize, bestWeight, bestWeight, minDistance],
+        );
+
+        if (initResult < 1) {
+            throw new Error("Failed to initialize with optimal weight");
+        }
+
+        const finalLineCount = stringArtModule.ccall(
+            "processImage",
+            "number",
+            ["number", "number", "number", "number"],
+            [imageData.dataPtr, imageData.width, imageData.height, imageData.channels],
+        );
+
+        // Get final result
+        const lineSequencePtr = stringArtModule.ccall("getLineSequence", "number", [], []);
+        const totalLineCount = stringArtModule.ccall("getLineCount", "number", [], []);
+
+        if (lineSequencePtr !== 0 && totalLineCount > 0) {
+            const lineSequence = new Int32Array(
+                stringArtModule.HEAPU8.buffer,
+                lineSequencePtr,
+                totalLineCount,
+            );
+            currentLineSequence = Array.from(lineSequence);
+            currentPinCount = pins;
+            currentLineCount = totalLineCount;
+            updateSVGOutput();
+        }
+
+        // Update the line weight slider to show the found value
+        const lineWeightSlider = document.getElementById("lineWeight");
+        const lineWeightValue = document.getElementById("lineWeightValue");
+        lineWeightSlider.value = bestWeight;
+        lineWeightValue.textContent = `Auto (${bestWeight})`;
+
+        showProgress(100);
+        showStatus(
+            `Found minimum weight: ${bestWeight} for ${finalLineCount} lines (target: ≤${targetMaxLines})`,
+            "success"
+        );
+
+        // Cleanup
+        stringArtModule._free(imageData.dataPtr);
+
+        setTimeout(() => hideStatus(), 3000);
+    } catch (error) {
+        if (!isAutoCancelled) {
+            showStatus(`Error during auto weight search: ${error.message}`, "error");
+        }
+        console.error("Auto weight search error:", error);
+
+        try {
+            stringArtModule.ccall("cleanup", null, [], []);
+        } catch (e) {
+            console.warn("Emergency cleanup failed:", e);
+        }
+    } finally {
+        isProcessing = false;
+        isAutoCancelled = false;
+
+        // Remove the cancellation handler and reset button
+        const generateBtn = document.getElementById("generateBtn");
+        generateBtn.removeEventListener("click", cancelHandler);
+        generateBtn.disabled = false;
+        generateBtn.textContent = "Generate String Art";
+        hideProgress();
+
+        // Re-enable all controls
+        const controls = [
+            "pins", "maxLines", "targetSize", "minDistance", "outputSize",
+            "autoRegenerate", "imageInput", "autoLineWeight"
+        ];
+        controls.forEach(id => {
+            const element = document.getElementById(id);
+            if (element) element.disabled = false;
+        });
+
+        // Re-enable line weight slider based on checkbox state
+        const autoLineWeightCheckbox = document.getElementById("autoLineWeight");
+        const lineWeightSlider = document.getElementById("lineWeight");
+        if (!autoLineWeightCheckbox.checked) {
+            lineWeightSlider.disabled = false;
+        }
+    }
+}
+
 async function generateStringArt() {
     console.log("=== generateStringArt called ===");
 
@@ -310,6 +596,14 @@ async function generateStringArt() {
         return;
     }
     console.log("File selected:", fileInput.files[0].name);
+
+    // Check if auto line weight is enabled
+    const autoLineWeightCheckbox = document.getElementById("autoLineWeight");
+    if (autoLineWeightCheckbox.checked) {
+        console.log("Auto line weight enabled, starting binary search...");
+        await generateWithAutoLineWeight();
+        return;
+    }
 
     if (!stringArtModule || !stringArtModule._malloc || !stringArtModule.ccall) {
         showStatus("WASM module not ready. Please wait and try again.", "error");
