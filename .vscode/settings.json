@@ -1,0 +1,15 @@
+{
+	"files.associations": {
+		"*.ejs": "ejs",
+		"*.json.liquid": "json",
+		"*.yaml.liquid": "yaml",
+		"*.md.liquid": "markdown",
+		"*.js.liquid": "liquid-javascript",
+		"*.css.liquid": "liquid-css",
+		"*.scss.liquid": "liquid-scss",
+		"*.rmd": "markdown",
+		".dockerignore": "plaintext",
+		"stringart_core.h": "c",
+		"stb_image_write.h": "c"
+	}
+}

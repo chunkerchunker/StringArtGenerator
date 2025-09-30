@@ -1197,10 +1197,6 @@ var _initStringArt = Module["_initStringArt"] = makeInvalidEarlyAccess("_initStr
 
 var _processImage = Module["_processImage"] = makeInvalidEarlyAccess("_processImage");
 
-var _getOutputImage = Module["_getOutputImage"] = makeInvalidEarlyAccess("_getOutputImage");
-
-var _getOutputSize = Module["_getOutputSize"] = makeInvalidEarlyAccess("_getOutputSize");
-
 var _getLineCount = Module["_getLineCount"] = makeInvalidEarlyAccess("_getLineCount");
 
 var _getLineSequence = Module["_getLineSequence"] = makeInvalidEarlyAccess("_getLineSequence");
@@ -1234,10 +1230,8 @@ var _emscripten_stack_get_current = makeInvalidEarlyAccess("_emscripten_stack_ge
 function assignWasmExports(wasmExports) {
   Module["_free"] = _free = createExportWrapper("free", 1);
   Module["_malloc"] = _malloc = createExportWrapper("malloc", 1);
-  Module["_initStringArt"] = _initStringArt = createExportWrapper("initStringArt", 7);
+  Module["_initStringArt"] = _initStringArt = createExportWrapper("initStringArt", 6);
   Module["_processImage"] = _processImage = createExportWrapper("processImage", 4);
-  Module["_getOutputImage"] = _getOutputImage = createExportWrapper("getOutputImage", 0);
-  Module["_getOutputSize"] = _getOutputSize = createExportWrapper("getOutputSize", 0);
   Module["_getLineCount"] = _getLineCount = createExportWrapper("getLineCount", 0);
   Module["_getLineSequence"] = _getLineSequence = createExportWrapper("getLineSequence", 0);
   Module["_freeOutputImage"] = _freeOutputImage = createExportWrapper("freeOutputImage", 1);

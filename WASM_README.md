@@ -78,14 +78,6 @@ Initialize the string art generator with the given parameters.
 
 Process an image and calculate the string art lines. Returns the number of lines generated.
 
-### `getOutputImage()`
-
-Returns a pointer to the generated output image data (RGBA format).
-
-### `getOutputSize()`
-
-Returns the size of the output image.
-
 ### `getLineCount()`
 
 Returns the number of lines in the generated string art.
