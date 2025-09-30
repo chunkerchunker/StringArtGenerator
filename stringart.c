@@ -26,6 +26,7 @@ typedef struct {
   int minDistance;
   char inputFile[256];
   char outputFile[256];
+  char outputPinsFile[256];
   int autoWeight;
 } Config;
 
@@ -41,6 +42,23 @@ typedef struct {
   int** lineCacheY;
   int* lineCacheSizes;
 } StringArtGenerator;
+
+void printHelp(const char* programName) {
+  printf("Usage: %s [options]\n\n", programName);
+  printf("Options:\n");
+  printf("  -input <file>          Input image file (required)\n");
+  printf("  -output <file>         Output image file (default: output.png)\n");
+  printf("  -output-pins <file>    Output pins sequence to text file\n");
+  printf("  -pins <number>         Number of pins around circle (default: 288)\n");
+  printf("  -lines <number>        Maximum number of lines (default: 4000)\n");
+  printf("  -size <number>         Processing image size (default: 500)\n");
+  printf("  -output-size <number>  Output image size (default: same as -size)\n");
+  printf("  -weight <number>       Line weight for algorithm (default: 8)\n");
+  printf("  -output-weight <number> Line weight for output image (default: same as -weight)\n");
+  printf("  -min-distance <number> Minimum pin distance (default: 10)\n");
+  printf("  -auto-weight           Automatically find optimal line weight\n");
+  printf("  -h, --help             Show this help message\n");
+}
 
 void initGenerator(StringArtGenerator* gen, Config* cfg) {
   gen->config = *cfg;
@@ -467,14 +485,20 @@ int main(int argc, char* argv[]) {
                    .minDistance = 10,
                    .inputFile = "",
                    .outputFile = "output.png",
+                   .outputPinsFile = "",
                    .autoWeight = 0};
 
   // Parse command line arguments
   for (int i = 1; i < argc; i++) {
-    if (strcmp(argv[i], "-input") == 0 && i + 1 < argc) {
+    if (strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "--help") == 0) {
+      printHelp(argv[0]);
+      return 0;
+    } else if (strcmp(argv[i], "-input") == 0 && i + 1 < argc) {
       strcpy(config.inputFile, argv[++i]);
     } else if (strcmp(argv[i], "-output") == 0 && i + 1 < argc) {
       strcpy(config.outputFile, argv[++i]);
+    } else if (strcmp(argv[i], "-output-pins") == 0 && i + 1 < argc) {
+      strcpy(config.outputPinsFile, argv[++i]);
     } else if (strcmp(argv[i], "-pins") == 0 && i + 1 < argc) {
       config.pins = atoi(argv[++i]);
     } else if (strcmp(argv[i], "-lines") == 0 && i + 1 < argc) {
@@ -553,6 +577,19 @@ int main(int argc, char* argv[]) {
   printf("Generating output image...\n");
   generateOutputImage(&gen, lineSequence, lineCount);
   printf("Output saved to %s\n", config.outputFile);
+
+  if (strlen(config.outputPinsFile) > 0) {
+    FILE* pinsFile = fopen(config.outputPinsFile, "w");
+    if (pinsFile) {
+      for (int i = 0; i < lineCount; i++) {
+        fprintf(pinsFile, "%d\n", lineSequence[i]);
+      }
+      fclose(pinsFile);
+      printf("Pins sequence saved to %s\n", config.outputPinsFile);
+    } else {
+      fprintf(stderr, "Error: Could not write to %s\n", config.outputPinsFile);
+    }
+  }
 
   free(lineSequence);
   freeGenerator(&gen);
