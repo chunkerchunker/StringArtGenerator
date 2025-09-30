@@ -28,6 +28,7 @@ typedef struct {
   char outputFile[256];
   char outputPinsFile[256];
   int autoWeight;
+  int quiet;
 } Config;
 
 typedef struct {
@@ -49,14 +50,19 @@ void printHelp(const char* programName) {
   printf("  -input <file>          Input image file (required)\n");
   printf("  -output <file>         Output image file (default: output.png)\n");
   printf("  -output-pins <file>    Output pins sequence to text file\n");
-  printf("  -pins <number>         Number of pins around circle (default: 288)\n");
+  printf(
+      "  -pins <number>         Number of pins around circle (default: 288)\n");
   printf("  -lines <number>        Maximum number of lines (default: 4000)\n");
   printf("  -size <number>         Processing image size (default: 500)\n");
-  printf("  -output-size <number>  Output image size (default: same as -size)\n");
+  printf(
+      "  -output-size <number>  Output image size (default: same as -size)\n");
   printf("  -weight <number>       Line weight for algorithm (default: 8)\n");
-  printf("  -output-weight <number> Line weight for output image (default: same as -weight)\n");
+  printf(
+      "  -output-weight <number> Line weight for output image (default: same "
+      "as -weight)\n");
   printf("  -min-distance <number> Minimum pin distance (default: 10)\n");
   printf("  -auto-weight           Automatically find optimal line weight\n");
+  printf("  -q, --quiet            Suppress non-error output\n");
   printf("  -h, --help             Show this help message\n");
 }
 
@@ -145,7 +151,8 @@ void loadAndProcessImage(StringArtGenerator* gen) {
   simpleResize(cropped, size, size, channels, resized, gen->imgSize,
                gen->imgSize);
 
-  if (width != gen->config.targetSize || height != gen->config.targetSize) {
+  if (!gen->config.quiet &&
+      (width != gen->config.targetSize || height != gen->config.targetSize)) {
     printf("  Resized from %dx%d to %dx%d\n", width, height, gen->imgSize,
            gen->imgSize);
   }
@@ -229,7 +236,9 @@ double getLineError(StringArtGenerator* gen, double* error, int cacheIndex) {
 }
 
 int* calculateLines(StringArtGenerator* gen, int* lineCount) {
-  printf("Calculating string art lines...\n");
+  if (!gen->config.quiet) {
+    printf("Calculating string art lines...\n");
+  }
 
   double* error = malloc(gen->imgSizeSq * sizeof(double));
   for (int i = 0; i < gen->imgSizeSq; i++) {
@@ -246,7 +255,7 @@ int* calculateLines(StringArtGenerator* gen, int* lineCount) {
     lastPins[i] = -1;
 
   for (int i = 0; i < gen->config.maxLines; i++) {
-    if (i % 100 == 0) {
+    if (!gen->config.quiet && i % 100 == 0) {
       printf("  Processing line %d/%d\r", i, gen->config.maxLines);
       fflush(stdout);
     }
@@ -304,7 +313,9 @@ int* calculateLines(StringArtGenerator* gen, int* lineCount) {
     currentPin = bestPin;
   }
 
-  printf("\n");
+  if (!gen->config.quiet) {
+    printf("\n");
+  }
   free(error);
   return lineSequence;
 }
@@ -384,9 +395,12 @@ int findOptimalWeight(StringArtGenerator* gen) {
   int bestWeight = 1;  // Start with low weight as fallback
   int targetMaxLines = gen->config.maxLines;
 
-  printf(
-      "Starting binary search for optimal line weight (target: <= %d lines)\n",
-      targetMaxLines);
+  if (!gen->config.quiet) {
+    printf(
+        "Starting binary search for optimal line weight (target: <= %d "
+        "lines)\n",
+        targetMaxLines);
+  }
 
   // Save original processed image data
   double* savedSourceImage = malloc(gen->imgSizeSq * sizeof(double));
@@ -405,7 +419,9 @@ int findOptimalWeight(StringArtGenerator* gen) {
     int lineCount;
     int* lineSequence = calculateLines(gen, &lineCount);
 
-    printf("  Weight %d: %d lines\n", mid, lineCount - 1);
+    if (!gen->config.quiet) {
+      printf("  Weight %d: %d lines\n", mid, lineCount - 1);
+    }
 
     // Adjust binary search bounds
     if (lineCount - 1 < targetMaxLines) {
@@ -422,7 +438,9 @@ int findOptimalWeight(StringArtGenerator* gen) {
 
   free(savedSourceImage);
 
-  printf("Maximum weight found: %d\n", bestWeight);
+  if (!gen->config.quiet) {
+    printf("Maximum weight found: %d\n", bestWeight);
+  }
   gen->config.lineWeight = bestWeight;
 
   return bestWeight;
@@ -486,7 +504,8 @@ int main(int argc, char* argv[]) {
                    .inputFile = "",
                    .outputFile = "output.png",
                    .outputPinsFile = "",
-                   .autoWeight = 0};
+                   .autoWeight = 0,
+                   .quiet = 0};
 
   // Parse command line arguments
   for (int i = 1; i < argc; i++) {
@@ -515,6 +534,8 @@ int main(int argc, char* argv[]) {
       config.minDistance = atoi(argv[++i]);
     } else if (strcmp(argv[i], "-auto-weight") == 0) {
       config.autoWeight = 1;
+    } else if (strcmp(argv[i], "-q") == 0 || strcmp(argv[i], "--quiet") == 0) {
+      config.quiet = 1;
     }
   }
 
@@ -530,20 +551,24 @@ int main(int argc, char* argv[]) {
     return 1;
   }
 
-  printf("Processing %s...\n", config.inputFile);
-  if (config.autoWeight) {
-    printf("  Auto-weight mode enabled\n");
-    printf(
-        "  Pins: %d, Max lines: %d, Processing size: %d, Output size: %d, Line "
-        "weight: auto, Output weight: %d, Min distance: %d\n",
-        config.pins, config.maxLines, config.targetSize, config.outputSize,
-        config.outputWeight, config.minDistance);
-  } else {
-    printf(
-        "  Pins: %d, Max lines: %d, Processing size: %d, Output size: %d, Line "
-        "weight: %d, Output weight: %d, Min distance: %d\n",
-        config.pins, config.maxLines, config.targetSize, config.outputSize,
-        config.lineWeight, config.outputWeight, config.minDistance);
+  if (!config.quiet) {
+    printf("Processing %s...\n", config.inputFile);
+    if (config.autoWeight) {
+      printf("  Auto-weight mode enabled\n");
+      printf(
+          "  Pins: %d, Max lines: %d, Processing size: %d, Output size: %d, "
+          "Line "
+          "weight: auto, Output weight: %d, Min distance: %d\n",
+          config.pins, config.maxLines, config.targetSize, config.outputSize,
+          config.outputWeight, config.minDistance);
+    } else {
+      printf(
+          "  Pins: %d, Max lines: %d, Processing size: %d, Output size: %d, "
+          "Line "
+          "weight: %d, Output weight: %d, Min distance: %d\n",
+          config.pins, config.maxLines, config.targetSize, config.outputSize,
+          config.lineWeight, config.outputWeight, config.minDistance);
+    }
   }
 
   StringArtGenerator gen;
@@ -572,11 +597,17 @@ int main(int argc, char* argv[]) {
 
   clock_t end = clock();
   double cpu_time_used = ((double)(end - start)) / CLOCKS_PER_SEC;
-  printf("Processing took %.2f seconds\n", cpu_time_used);
+  if (!config.quiet) {
+    printf("Processing took %.2f seconds\n", cpu_time_used);
+  }
 
-  printf("Generating output image...\n");
+  if (!config.quiet) {
+    printf("Generating output image...\n");
+  }
   generateOutputImage(&gen, lineSequence, lineCount);
-  printf("Output saved to %s\n", config.outputFile);
+  if (!config.quiet) {
+    printf("Output saved to %s\n", config.outputFile);
+  }
 
   if (strlen(config.outputPinsFile) > 0) {
     FILE* pinsFile = fopen(config.outputPinsFile, "w");
@@ -585,7 +616,9 @@ int main(int argc, char* argv[]) {
         fprintf(pinsFile, "%d\n", lineSequence[i]);
       }
       fclose(pinsFile);
-      printf("Pins sequence saved to %s\n", config.outputPinsFile);
+      if (!config.quiet) {
+        printf("Pins sequence saved to %s\n", config.outputPinsFile);
+      }
     } else {
       fprintf(stderr, "Error: Could not write to %s\n", config.outputPinsFile);
     }

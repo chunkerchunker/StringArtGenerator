@@ -22,6 +22,7 @@ typedef struct {
   int lineWeight;
   int outputWeight;
   int minDistance;
+  int quiet;
 } Config;
 
 typedef struct {
