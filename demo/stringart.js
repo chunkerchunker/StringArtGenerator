@@ -708,7 +708,7 @@ async function generateStringArt() {
 
         if (pins < 50 || pins > 1000) throw new Error("Invalid pins count");
         if (maxLines < 10 || maxLines > 50000) throw new Error("Invalid max lines");
-        if (targetSize < 100 || targetSize > 2000)
+        if (targetSize < 50 || targetSize > 2000)
             throw new Error("Invalid target size");
 
         // Initialize the generator
