@@ -23,6 +23,7 @@ typedef struct {
   int outputWeight;
   int minDistance;
   int quiet;
+  int useQuantized;  // 0 = float precision, 1 = int16 quantized (faster)
 } Config;
 
 typedef struct {
@@ -44,6 +45,21 @@ typedef struct {
   int* validPins;
   int* validCounts;
 } FastStringArtGenerator;
+
+// Quantized version for 2x speedup
+typedef struct {
+  Config config;
+  int imgSize;
+  int imgSizeSq;
+
+  Coord* pinCoords;
+  uint8_t* sourceImage;  // Quantized: 0-255
+  int16_t* errorImage;   // Quantized: can go negative
+  FastLineCache* lineCache;
+
+  int* validPins;
+  int* validCounts;
+} QuantizedStringArtGenerator;
 
 // Core algorithm functions (shared between all versions)
 void initGenerator(FastStringArtGenerator* gen, Config* cfg);

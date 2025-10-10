@@ -1,8 +1,25 @@
 .PHONY: all build build-c build-fast build-wasm clean test test-c test-fast
 
 CC = clang
+
+# Detect architecture and set SIMD flags accordingly
+ARCH := $(shell uname -m)
+ifeq ($(ARCH),x86_64)
+    # x86_64: Enable AVX if supported
+    SIMD_FLAGS = -mavx
+else ifeq ($(ARCH),aarch64)
+    # ARM 64-bit: NEON is always available
+    SIMD_FLAGS =
+else ifeq ($(ARCH),arm64)
+    # Apple Silicon: NEON is always available
+    SIMD_FLAGS =
+else
+    SIMD_FLAGS =
+endif
+
 CFLAGS = -std=c99 -O3 -march=native -Wall -Wextra
-CFLAGS_FAST = -std=c99 -O3 -march=native -funroll-loops -ffast-math -finline-functions -Wall -Wextra
+# Enable SIMD optimizations for hot path (AVX on x86, NEON on ARM)
+CFLAGS_FAST = -std=c99 -O3 -march=native $(SIMD_FLAGS) -funroll-loops -ffast-math -finline-functions -Wall -Wextra
 LDFLAGS = -lm
 
 all: build build-c build-fast build-wasm
@@ -26,10 +43,10 @@ stringart-fast: stringart_fast.c stringart_core.o stringart_core.h
 build-wasm: stringart.wasm.js
 
 stringart.wasm.js: stringart_wasm.c stringart_core.c stringart_core.h stb_image.h stb_image_write.h
-	emcc -O1 -s WASM=1 -s EXPORTED_RUNTIME_METHODS='["cwrap","ccall","HEAPU8","HEAP8","HEAP32","getValue","setValue","wasmMemory"]' \
+	emcc -O3 -msimd128 -s WASM=1 -s EXPORTED_RUNTIME_METHODS='["cwrap","ccall","HEAPU8","HEAP8","HEAP32","getValue","setValue","wasmMemory"]' \
 	     -s ALLOW_MEMORY_GROWTH=1 -s MODULARIZE=1 -s EXPORT_NAME="StringArtModule" \
 	     -s EXPORTED_FUNCTIONS='["_malloc","_free"]' \
-	     -s INITIAL_MEMORY=32MB -s MAXIMUM_MEMORY=1GB -s ASSERTIONS=1 -s SAFE_HEAP=1 \
+	     -s INITIAL_MEMORY=32MB -s MAXIMUM_MEMORY=1GB \
 	     stringart_wasm.c stringart_core.c -o stringart.wasm.js
 
 clean:

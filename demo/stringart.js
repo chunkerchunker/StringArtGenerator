@@ -36,6 +36,7 @@ document.addEventListener("DOMContentLoaded", () => {
         "outputSize",
         "lineWeight",
         "minDistance",
+        "webcamContrast",
     ];
     ranges.forEach((id) => {
         const input = document.getElementById(id);
@@ -82,8 +83,34 @@ document.addEventListener("DOMContentLoaded", () => {
     const lineWeightSlider = document.getElementById("lineWeight");
     const lineWeightValue = document.getElementById("lineWeightValue");
 
-    autoLineWeightCheckbox.addEventListener("change", () => {
+    autoLineWeightCheckbox.addEventListener("change", async () => {
         if (autoLineWeightCheckbox.checked) {
+            // Special handling for webcam mode
+            if (webcamMode && webcamStream) {
+                // Pause webcam processing
+                if (webcamProcessingLoop) {
+                    cancelAnimationFrame(webcamProcessingLoop);
+                    webcamProcessingLoop = null;
+                }
+
+                // Run auto line weight search once
+                await generateWithAutoLineWeight();
+
+                // Uncheck the auto checkbox after completion
+                autoLineWeightCheckbox.checked = false;
+                lineWeightSlider.disabled = false;
+                lineWeightValue.textContent = lineWeightSlider.value;
+                lineWeightSlider.style.opacity = "1";
+
+                // Resume webcam processing
+                if (webcamStream && webcamMode) {
+                    startWebcamProcessing();
+                }
+
+                return;
+            }
+
+            // Normal mode (not webcam)
             lineWeightSlider.disabled = true;
             lineWeightValue.textContent = "Auto";
             lineWeightSlider.style.opacity = "0.5";
@@ -322,8 +349,10 @@ async function generateWithAutoLineWeight() {
     }
 
     const fileInput = document.getElementById("imageInput");
-    if (!fileInput.files[0]) {
-        alert("Please select an image file first!");
+
+    // Check if we have either a file input OR a saved webcam frame
+    if (!fileInput.files[0] && !originalImage && !lastWebcamFrame) {
+        alert("Please select an image file or capture a webcam frame first!");
         return;
     }
 
@@ -396,7 +425,7 @@ async function generateWithAutoLineWeight() {
         const minDistance = parseInt(document.getElementById("minDistance").value);
 
         // Load image data once
-        const file = fileInput.files[0];
+        const file = fileInput.files[0] || null; // null if using webcam frame
         const imageData = await loadImageData(file);
 
         // Binary search parameters
@@ -588,14 +617,21 @@ async function generateStringArt() {
         return;
     }
 
-    console.log("Checking for file input...");
+    console.log("Checking for image source...");
     const fileInput = document.getElementById("imageInput");
-    if (!fileInput.files[0]) {
-        console.log("No file selected");
-        alert("Please select an image file first!");
+
+    // Check if we have either a file input OR a saved webcam frame
+    if (!fileInput.files[0] && !originalImage && !lastWebcamFrame) {
+        console.log("No image available");
+        alert("Please select an image file or capture a webcam frame first!");
         return;
     }
-    console.log("File selected:", fileInput.files[0].name);
+
+    if (fileInput.files[0]) {
+        console.log("File selected:", fileInput.files[0].name);
+    } else if (lastWebcamFrame || originalImage) {
+        console.log("Using saved webcam frame");
+    }
 
     // Check if auto line weight is enabled
     const autoLineWeightCheckbox = document.getElementById("autoLineWeight");
@@ -734,7 +770,7 @@ async function generateStringArt() {
         showProgress(20);
 
         // Load and process image
-        const file = fileInput.files[0];
+        const file = fileInput.files[0] || null; // null if using webcam frame
         console.log("Loading image data...");
         const imageData = await loadImageData(file);
         console.log("Image data loaded:", imageData);
@@ -946,7 +982,67 @@ async function loadImageData(file) {
             }
         }
 
-        // Fallback to original behavior
+        // If no file provided but we have a saved webcam frame, use it
+        if (!file && (lastWebcamFrame || originalImage)) {
+            const img = lastWebcamFrame || originalImage;
+            try {
+                const canvas = document.createElement("canvas");
+                const ctx = canvas.getContext("2d");
+                canvas.width = img.width;
+                canvas.height = img.height;
+                ctx.drawImage(img, 0, 0);
+
+                const imageData = ctx.getImageData(0, 0, img.width, img.height);
+                const data = imageData.data;
+
+                if (!stringArtModule || !stringArtModule._malloc) {
+                    reject(new Error("WASM module not ready"));
+                    return;
+                }
+
+                const dataPtr = stringArtModule._malloc(data.length);
+                if (dataPtr === 0) {
+                    reject(new Error("Failed to allocate WASM memory"));
+                    return;
+                }
+
+                let wasmArray;
+                if (stringArtModule.HEAPU8) {
+                    wasmArray = new Uint8Array(
+                        stringArtModule.HEAPU8.buffer,
+                        dataPtr,
+                        data.length,
+                    );
+                } else {
+                    const memory = stringArtModule.wasmMemory || stringArtModule.memory;
+                    if (memory?.buffer) {
+                        wasmArray = new Uint8Array(memory.buffer, dataPtr, data.length);
+                    } else {
+                        reject(new Error("Cannot access WASM memory"));
+                        return;
+                    }
+                }
+                wasmArray.set(data);
+
+                resolve({
+                    dataPtr: dataPtr,
+                    width: img.width,
+                    height: img.height,
+                    channels: 4, // RGBA
+                });
+                return;
+            } catch (error) {
+                reject(error);
+                return;
+            }
+        }
+
+        // Fallback to loading from file
+        if (!file) {
+            reject(new Error("No image source available"));
+            return;
+        }
+
         const img = new Image();
         img.onload = () => {
             try {
@@ -1837,13 +1933,15 @@ function downloadPinList() {
 
     // Generate the output filename
     const fileInput = document.getElementById("imageInput");
-    if (!fileInput.files || fileInput.files.length === 0) {
-        alert("No input file selected");
-        return;
+    let baseName = "stringart";
+
+    if (fileInput.files && fileInput.files.length > 0) {
+        const parts = fileInput.files[0].name.split(".");
+        baseName = parts.slice(0, -1).join(".");
+    } else if (lastWebcamFrame) {
+        baseName = "webcam-capture";
     }
 
-    const parts = fileInput.files[0].name.split(".");
-    const baseName = parts.slice(0, -1).join(".");
     const outname = `${baseName}-pins.txt`;
 
     // Create text content with one pin number per line
@@ -1888,8 +1986,15 @@ function downloadSVGWithStyles(originalSvg) {
 
     // generate the output filename
     const fileInput = document.getElementById("imageInput");
-    const parts = fileInput.files[0].name.split(".");
-    const baseName = parts.slice(0, -1).join(".");
+    let baseName = "stringart";
+
+    if (fileInput.files && fileInput.files.length > 0) {
+        const parts = fileInput.files[0].name.split(".");
+        baseName = parts.slice(0, -1).join(".");
+    } else if (lastWebcamFrame) {
+        baseName = "webcam-capture";
+    }
+
     const outname = `${baseName}-strings.svg`;
 
     // Serialize and download
@@ -1938,4 +2043,303 @@ function renderStringsToSVG(svg, lineSequence, pinCoords) {
         line.setAttribute("y2", pinCoords[toPin].y);
         svg.appendChild(line);
     }
+}
+
+// ============= WEBCAM MODE ============= //
+
+let webcamMode = false;
+let webcamStream = null;
+let webcamProcessingLoop = null;
+let webcamProcessing = false;
+let lastWebcamFrame = null; // Store last frame as Image object
+
+// biome-ignore lint/correctness/noUnusedVariables: called from html
+function toggleInputMode() {
+    const modeToggle = document.getElementById('modeToggle');
+    const imageInputGroup = document.getElementById('imageInputGroup');
+    const webcamGroup = document.getElementById('webcamGroup');
+
+    // Update mode based on checkbox state
+    webcamMode = modeToggle.checked;
+
+    if (webcamMode) {
+        imageInputGroup.style.display = 'none';
+        webcamGroup.style.display = 'block';
+
+        // Automatically start webcam
+        startWebcam();
+    } else {
+        imageInputGroup.style.display = 'block';
+        webcamGroup.style.display = 'none';
+
+        // Stop webcam if running
+        if (webcamStream) {
+            stopWebcam();
+        }
+    }
+}
+
+// biome-ignore lint/correctness/noUnusedVariables: called from html
+async function startWebcam() {
+    try {
+        // Ensure auto line weight checkbox is unchecked
+        const autoLineWeightCheckbox = document.getElementById('autoLineWeight');
+        const lineWeightSlider = document.getElementById('lineWeight');
+        const lineWeightValue = document.getElementById('lineWeightValue');
+
+        if (autoLineWeightCheckbox.checked) {
+            autoLineWeightCheckbox.checked = false;
+            lineWeightSlider.disabled = false;
+            lineWeightValue.textContent = lineWeightSlider.value;
+            lineWeightSlider.style.opacity = '1';
+        }
+
+        const video = document.getElementById('webcamVideo');
+        const startBtn = document.getElementById('startWebcamBtn');
+        const stopBtn = document.getElementById('stopWebcamBtn');
+
+        showStatus('Starting webcam...', 'loading');
+
+        webcamStream = await navigator.mediaDevices.getUserMedia({
+            video: {
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            }
+        });
+
+        video.srcObject = webcamStream;
+
+        // Show canvas instead of video (canvas will display contrast-adjusted frames)
+        const canvas = document.getElementById('webcamCanvas');
+        canvas.style.display = 'block';
+
+        startBtn.style.display = 'none';
+        stopBtn.style.display = 'block';
+
+        showStatus('Webcam started!', 'success');
+        setTimeout(() => hideStatus(), 2000);
+
+        // Start processing loop
+        startWebcamProcessing();
+
+    } catch (error) {
+        showStatus(`Error starting webcam: ${error.message}`, 'error');
+        console.error('Webcam error:', error);
+    }
+}
+
+// biome-ignore lint/correctness/noUnusedVariables: called from html
+function stopWebcam() {
+    const video = document.getElementById('webcamVideo');
+    const startBtn = document.getElementById('startWebcamBtn');
+    const stopBtn = document.getElementById('stopWebcamBtn');
+    const canvas = document.getElementById('webcamCanvas');
+
+    // Capture last frame before stopping
+    if (video.videoWidth && video.videoHeight) {
+        const targetSize = parseInt(document.getElementById('targetSize').value);
+        canvas.width = targetSize;
+        canvas.height = targetSize;
+
+        const ctx = canvas.getContext('2d');
+        const size = Math.min(video.videoWidth, video.videoHeight);
+        const sx = (video.videoWidth - size) / 2;
+        const sy = (video.videoHeight - size) / 2;
+
+        ctx.fillStyle = 'white';
+        ctx.fillRect(0, 0, targetSize, targetSize);
+        ctx.drawImage(video, sx, sy, size, size, 0, 0, targetSize, targetSize);
+
+        // Convert canvas to image and save
+        const img = new Image();
+        img.onload = () => {
+            lastWebcamFrame = img;
+            originalImage = img; // Set as original image for reprocessing
+            hasInitialImage = true;
+            displayImageWithZoom(img);
+            showStatus('Last webcam frame saved', 'success');
+            setTimeout(() => hideStatus(), 2000);
+        };
+        img.src = canvas.toDataURL();
+    }
+
+    if (webcamStream) {
+        webcamStream.getTracks().forEach(track => track.stop());
+        webcamStream = null;
+    }
+
+    if (webcamProcessingLoop) {
+        cancelAnimationFrame(webcamProcessingLoop);
+        webcamProcessingLoop = null;
+    }
+
+    canvas.style.display = 'none';
+    startBtn.style.display = 'block';
+    stopBtn.style.display = 'none';
+    webcamProcessing = false;
+}
+
+function startWebcamProcessing() {
+    const processFrame = async () => {
+        if (!webcamStream || !webcamMode) {
+            return;
+        }
+
+        // Only process if not already processing
+        if (!webcamProcessing) {
+            webcamProcessing = true;
+
+            try {
+                await processWebcamFrame();
+            } catch (error) {
+                console.error('Frame processing error:', error);
+                showStatus(`Processing error: ${error.message}`, 'error');
+            } finally {
+                webcamProcessing = false;
+            }
+        }
+
+        // Schedule next frame
+        webcamProcessingLoop = requestAnimationFrame(processFrame);
+    };
+
+    processFrame();
+}
+
+async function processWebcamFrame() {
+    const video = document.getElementById('webcamVideo');
+    const canvas = document.getElementById('webcamCanvas');
+
+    if (!video.videoWidth || !video.videoHeight) {
+        return; // Video not ready
+    }
+
+    // Get target size
+    const targetSize = parseInt(document.getElementById('targetSize').value);
+
+    // Set canvas to target size
+    canvas.width = targetSize;
+    canvas.height = targetSize;
+
+    const ctx = canvas.getContext('2d');
+
+    // Calculate crop to fit square
+    const size = Math.min(video.videoWidth, video.videoHeight);
+    const sx = (video.videoWidth - size) / 2;
+    const sy = (video.videoHeight - size) / 2;
+
+    // Draw cropped and scaled frame
+    ctx.fillStyle = 'white';
+    ctx.fillRect(0, 0, targetSize, targetSize);
+    ctx.drawImage(video, sx, sy, size, size, 0, 0, targetSize, targetSize);
+
+    // Get image data
+    const imageData = ctx.getImageData(0, 0, targetSize, targetSize);
+    const data = imageData.data;
+
+    // Apply contrast adjustment
+    const contrastValue = parseInt(document.getElementById('webcamContrast').value);
+    const contrastFactor = contrastValue / 100;
+
+    for (let i = 0; i < data.length; i += 4) {
+        // Apply contrast to R, G, B channels (skip alpha channel at i+3)
+        data[i] = Math.max(0, Math.min(255, ((data[i] - 128) * contrastFactor) + 128));       // R
+        data[i + 1] = Math.max(0, Math.min(255, ((data[i + 1] - 128) * contrastFactor) + 128)); // G
+        data[i + 2] = Math.max(0, Math.min(255, ((data[i + 2] - 128) * contrastFactor) + 128)); // B
+    }
+
+    // Put adjusted image data back to canvas
+    ctx.putImageData(imageData, 0, 0);
+
+    // Save current frame for later reprocessing (non-blocking)
+    const dataURL = canvas.toDataURL();
+    if (!lastWebcamFrame || lastWebcamFrame.src !== dataURL) {
+        const img = new Image();
+        img.onload = () => {
+            lastWebcamFrame = img;
+            originalImage = img;
+            hasInitialImage = true;
+        };
+        img.src = dataURL;
+    }
+
+    // Get the adjusted image data for WASM processing
+    const adjustedImageData = ctx.getImageData(0, 0, targetSize, targetSize);
+    const adjustedData = adjustedImageData.data;
+
+    // Allocate WASM memory
+    if (!stringArtModule || !stringArtModule._malloc) {
+        return;
+    }
+
+    const dataPtr = stringArtModule._malloc(adjustedData.length);
+    if (dataPtr === 0) {
+        console.error('Failed to allocate WASM memory');
+        return;
+    }
+
+    // Copy data to WASM
+    let wasmArray;
+    if (stringArtModule.HEAPU8) {
+        wasmArray = new Uint8Array(
+            stringArtModule.HEAPU8.buffer,
+            dataPtr,
+            adjustedData.length,
+        );
+    } else {
+        const memory = stringArtModule.wasmMemory || stringArtModule.memory;
+        if (memory?.buffer) {
+            wasmArray = new Uint8Array(memory.buffer, dataPtr, adjustedData.length);
+        } else {
+            stringArtModule._free(dataPtr);
+            return;
+        }
+    }
+    wasmArray.set(adjustedData);
+
+    // Get parameters
+    const pins = parseInt(document.getElementById('pins').value);
+    const maxLines = parseInt(document.getElementById('maxLines').value);
+    const lineWeight = parseInt(document.getElementById('lineWeight').value);
+    const minDistance = parseInt(document.getElementById('minDistance').value);
+
+    // Initialize if needed
+    const initResult = stringArtModule.ccall(
+        'initStringArt',
+        'number',
+        ['number', 'number', 'number', 'number', 'number', 'number'],
+        [pins, maxLines, targetSize, lineWeight, lineWeight, minDistance],
+    );
+
+    if (initResult < 1) {
+        stringArtModule._free(dataPtr);
+        return;
+    }
+
+    // Process frame
+    stringArtModule.ccall(
+        'processImage',
+        'number',
+        ['number', 'number', 'number', 'number'],
+        [dataPtr, targetSize, targetSize, 4],
+    );
+
+    // Get result
+    const lineSequencePtr = stringArtModule.ccall('getLineSequence', 'number', [], []);
+    const totalLineCount = stringArtModule.ccall('getLineCount', 'number', [], []);
+
+    if (lineSequencePtr !== 0 && totalLineCount > 0) {
+        const lineSequence = new Int32Array(
+            stringArtModule.HEAPU8.buffer,
+            lineSequencePtr,
+            totalLineCount,
+        );
+        currentLineSequence = Array.from(lineSequence);
+        currentPinCount = pins;
+        currentLineCount = totalLineCount;
+        updateSVGOutput();
+    }
+
+    // Cleanup
+    stringArtModule._free(dataPtr);
 }

@@ -15,11 +15,43 @@
 
             <div class="controls">
                 <div class="control-group">
+                    <label>Input Mode:</label>
+                    <div class="toggle-switch-container">
+                        <span class="toggle-label">📁 Static Image</span>
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="modeToggle" onchange="toggleInputMode()">
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span class="toggle-label">📹 Webcam</span>
+                    </div>
+                </div>
+
+                <div class="control-group" id="imageInputGroup">
                     <label for="imageInput">Choose Image:</label>
                     <label for="imageInput" class="file-input-wrapper">
                         <input type="file" id="imageInput" accept="image/*">
                         <span id="fileInputText">Select Image File</span>
                     </label>
+                </div>
+
+                <div class="control-group" id="webcamGroup" style="display: none;">
+                    <label>Webcam:</label>
+                    <div style="display: flex; gap: 10px;">
+                        <button id="startWebcamBtn" onclick="startWebcam()" style="flex: 1; padding: 10px; border-radius: 4px; background: #2196F3; color: white; border: none; cursor: pointer;">
+                            Start Webcam
+                        </button>
+                        <button id="stopWebcamBtn" onclick="stopWebcam()" style="flex: 1; padding: 10px; border-radius: 4px; background: #f44336; color: white; border: none; cursor: pointer; display: none;">
+                            Stop Webcam
+                        </button>
+                    </div>
+                    <video id="webcamVideo" autoplay playsinline style="display: none;"></video>
+                    <canvas id="webcamCanvas" style="width: 100%; border-radius: 4px; margin-top: 10px; display: none;"></canvas>
+
+                    <div style="margin-top: 15px;">
+                        <label for="webcamContrast">Contrast:</label>
+                        <input type="range" id="webcamContrast" min="0" max="200" value="100" step="5">
+                        <div class="range-value" id="webcamContrastValue">100</div>
+                    </div>
                 </div>
 
                 <div class="control-group">
@@ -30,8 +62,8 @@
 
                 <div class="control-group">
                     <label for="pins">Pins:</label>
-                    <input type="range" id="pins" min="50" max="500" value="288">
-                    <div class="range-value" id="pinsValue">288</div>
+                    <input type="range" id="pins" min="50" max="500" value="300">
+                    <div class="range-value" id="pinsValue">300</div>
                 </div>
 
                 <div class="control-group">

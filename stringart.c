@@ -51,7 +51,7 @@ void printHelp(const char* programName) {
   printf("  -output <file>         Output image file (default: output.png)\n");
   printf("  -output-pins <file>    Output pins sequence to text file\n");
   printf(
-      "  -pins <number>         Number of pins around circle (default: 288)\n");
+      "  -pins <number>         Number of pins around circle (default: 300)\n");
   printf("  -lines <number>        Maximum number of lines (default: 4000)\n");
   printf("  -size <number>         Processing image size (default: 500)\n");
   printf(
@@ -494,7 +494,7 @@ void generateOutputImage(StringArtGenerator* gen,
 }
 
 int main(int argc, char* argv[]) {
-  Config config = {.pins = 288,
+  Config config = {.pins = 300,
                    .maxLines = 4000,
                    .targetSize = 500,
                    .outputSize = 0,

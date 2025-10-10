@@ -1,5 +1,20 @@
 #include "stringart_core.h"
 
+// SIMD support detection and includes
+#if defined(__wasm__) && defined(__wasm_simd128__)
+  #define USE_WASM_SIMD
+  #include <wasm_simd128.h>
+#elif defined(__AVX__) && (defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86))
+  #define USE_AVX
+  #include <immintrin.h>  // AVX
+#elif defined(__x86_64__) || defined(_M_X64) || defined(__i386__) || defined(_M_IX86)
+  #define USE_SSE
+  #include <xmmintrin.h>  // SSE
+#elif defined(__ARM_NEON) || defined(__aarch64__)
+  #define USE_NEON
+  #include <arm_neon.h>
+#endif
+
 void initGenerator(FastStringArtGenerator* gen, Config* cfg) {
   gen->config = *cfg;
   gen->imgSize = cfg->targetSize;
@@ -180,11 +195,105 @@ static inline float getLineErrorFast(float* error, int* coords, int size) {
   float sum = 0.0f;
   int i = 0;
 
+#ifdef USE_WASM_SIMD
+  // WASM SIMD128 version: process 4 floats at a time
+  v128_t sum_vec = wasm_f32x4_splat(0.0f);
+
+  for (; i + 3 < size; i += 4) {
+    // Gather 4 values
+    v128_t values = wasm_f32x4_make(
+      error[coords[i]],
+      error[coords[i + 1]],
+      error[coords[i + 2]],
+      error[coords[i + 3]]
+    );
+    sum_vec = wasm_f32x4_add(sum_vec, values);
+  }
+
+  // Horizontal sum of the 4 lanes
+  sum = wasm_f32x4_extract_lane(sum_vec, 0) +
+        wasm_f32x4_extract_lane(sum_vec, 1) +
+        wasm_f32x4_extract_lane(sum_vec, 2) +
+        wasm_f32x4_extract_lane(sum_vec, 3);
+
+#elif defined(USE_AVX)
+  // AVX version: process 8 floats at a time (256-bit)
+  __m256 sum_vec = _mm256_setzero_ps();
+
+  for (; i + 7 < size; i += 8) {
+    // Gather 8 values
+    __m256 values = _mm256_set_ps(
+      error[coords[i + 7]],
+      error[coords[i + 6]],
+      error[coords[i + 5]],
+      error[coords[i + 4]],
+      error[coords[i + 3]],
+      error[coords[i + 2]],
+      error[coords[i + 1]],
+      error[coords[i]]
+    );
+    sum_vec = _mm256_add_ps(sum_vec, values);
+  }
+
+  // Horizontal sum of the 8 lanes
+  __m128 hi = _mm256_extractf128_ps(sum_vec, 1);
+  __m128 lo = _mm256_castps256_ps128(sum_vec);
+  __m128 sum128 = _mm_add_ps(hi, lo);
+
+  // Now sum the 4 elements in sum128
+  sum128 = _mm_hadd_ps(sum128, sum128);
+  sum128 = _mm_hadd_ps(sum128, sum128);
+  sum = _mm_cvtss_f32(sum128);
+
+#elif defined(USE_SSE)
+  // SSE version: process 4 floats at a time
+  __m128 sum_vec = _mm_setzero_ps();
+
+  for (; i + 3 < size; i += 4) {
+    // Gather 4 values (no direct gather in SSE, manual load)
+    __m128 values = _mm_set_ps(
+      error[coords[i + 3]],
+      error[coords[i + 2]],
+      error[coords[i + 1]],
+      error[coords[i]]
+    );
+    sum_vec = _mm_add_ps(sum_vec, values);
+  }
+
+  // Horizontal sum of the 4 lanes
+  float temp[4];
+  _mm_store_ps(temp, sum_vec);
+  sum = temp[0] + temp[1] + temp[2] + temp[3];
+
+#elif defined(USE_NEON)
+  // NEON version: process 4 floats at a time
+  float32x4_t sum_vec = vdupq_n_f32(0.0f);
+
+  for (; i + 3 < size; i += 4) {
+    // Gather 4 values
+    float32x4_t values = {
+      error[coords[i]],
+      error[coords[i + 1]],
+      error[coords[i + 2]],
+      error[coords[i + 3]]
+    };
+    sum_vec = vaddq_f32(sum_vec, values);
+  }
+
+  // Horizontal sum
+  float temp[4];
+  vst1q_f32(temp, sum_vec);
+  sum = temp[0] + temp[1] + temp[2] + temp[3];
+
+#else
+  // Scalar fallback: manual unroll
   for (; i + 3 < size; i += 4) {
     sum += error[coords[i]] + error[coords[i + 1]] + error[coords[i + 2]] +
            error[coords[i + 3]];
   }
+#endif
 
+  // Handle remaining elements
   for (; i < size; i++) {
     sum += error[coords[i]];
   }
@@ -198,19 +307,315 @@ static inline void updateErrorFast(float* error,
                                    float weight) {
   int i = 0;
 
+#ifdef USE_WASM_SIMD
+  // WASM SIMD128 version: process 4 floats at a time
+  v128_t weight_vec = wasm_f32x4_splat(weight);
+
+  for (; i + 3 < size; i += 4) {
+    // Gather 4 values
+    v128_t values = wasm_f32x4_make(
+      error[coords[i]],
+      error[coords[i + 1]],
+      error[coords[i + 2]],
+      error[coords[i + 3]]
+    );
+
+    // Subtract weight
+    values = wasm_f32x4_sub(values, weight_vec);
+
+    // Scatter back
+    error[coords[i]] = wasm_f32x4_extract_lane(values, 0);
+    error[coords[i + 1]] = wasm_f32x4_extract_lane(values, 1);
+    error[coords[i + 2]] = wasm_f32x4_extract_lane(values, 2);
+    error[coords[i + 3]] = wasm_f32x4_extract_lane(values, 3);
+  }
+
+#elif defined(USE_AVX)
+  // AVX version: process 8 floats at a time (256-bit)
+  __m256 weight_vec = _mm256_set1_ps(weight);
+
+  for (; i + 7 < size; i += 8) {
+    // Gather 8 values
+    __m256 values = _mm256_set_ps(
+      error[coords[i + 7]],
+      error[coords[i + 6]],
+      error[coords[i + 5]],
+      error[coords[i + 4]],
+      error[coords[i + 3]],
+      error[coords[i + 2]],
+      error[coords[i + 1]],
+      error[coords[i]]
+    );
+
+    // Subtract weight
+    values = _mm256_sub_ps(values, weight_vec);
+
+    // Scatter back
+    float temp[8];
+    _mm256_storeu_ps(temp, values);
+    error[coords[i]] = temp[0];
+    error[coords[i + 1]] = temp[1];
+    error[coords[i + 2]] = temp[2];
+    error[coords[i + 3]] = temp[3];
+    error[coords[i + 4]] = temp[4];
+    error[coords[i + 5]] = temp[5];
+    error[coords[i + 6]] = temp[6];
+    error[coords[i + 7]] = temp[7];
+  }
+
+#elif defined(USE_SSE)
+  // SSE version: process 4 floats at a time
+  __m128 weight_vec = _mm_set1_ps(weight);
+
+  for (; i + 3 < size; i += 4) {
+    // Gather 4 values
+    __m128 values = _mm_set_ps(
+      error[coords[i + 3]],
+      error[coords[i + 2]],
+      error[coords[i + 1]],
+      error[coords[i]]
+    );
+
+    // Subtract weight
+    values = _mm_sub_ps(values, weight_vec);
+
+    // Scatter back
+    float temp[4];
+    _mm_store_ps(temp, values);
+    error[coords[i]] = temp[0];
+    error[coords[i + 1]] = temp[1];
+    error[coords[i + 2]] = temp[2];
+    error[coords[i + 3]] = temp[3];
+  }
+
+#elif defined(USE_NEON)
+  // NEON version: process 4 floats at a time
+  float32x4_t weight_vec = vdupq_n_f32(weight);
+
+  for (; i + 3 < size; i += 4) {
+    // Gather 4 values
+    float32x4_t values = {
+      error[coords[i]],
+      error[coords[i + 1]],
+      error[coords[i + 2]],
+      error[coords[i + 3]]
+    };
+
+    // Subtract weight
+    values = vsubq_f32(values, weight_vec);
+
+    // Scatter back
+    float temp[4];
+    vst1q_f32(temp, values);
+    error[coords[i]] = temp[0];
+    error[coords[i + 1]] = temp[1];
+    error[coords[i + 2]] = temp[2];
+    error[coords[i + 3]] = temp[3];
+  }
+
+#else
+  // Scalar fallback: direct updates
   for (; i + 3 < size; i += 4) {
     error[coords[i]] -= weight;
     error[coords[i + 1]] -= weight;
     error[coords[i + 2]] -= weight;
     error[coords[i + 3]] -= weight;
   }
+#endif
 
+  // Handle remaining elements
   for (; i < size; i++) {
     error[coords[i]] -= weight;
   }
 }
 
-int* calculateLines(FastStringArtGenerator* gen, int* lineCount) {
+// ============= QUANTIZED SIMD FUNCTIONS (2x faster on NEON) ============= //
+
+// Quantized line error calculation: uses int16_t for 2x SIMD width
+static inline float getLineErrorQuantized(int16_t* error, int* coords, int size) {
+  if (size == 0)
+    return 0.0f;
+
+  int32_t sum = 0;
+  int i = 0;
+
+#ifdef USE_NEON
+  // NEON version: process 8 int16s at a time (vs 4 floats)
+  int32x4_t sum_vec1 = vdupq_n_s32(0);
+  int32x4_t sum_vec2 = vdupq_n_s32(0);
+
+  for (; i + 7 < size; i += 8) {
+    // Gather 8 int16 values
+    int16_t vals[8];
+    vals[0] = error[coords[i]];
+    vals[1] = error[coords[i + 1]];
+    vals[2] = error[coords[i + 2]];
+    vals[3] = error[coords[i + 3]];
+    vals[4] = error[coords[i + 4]];
+    vals[5] = error[coords[i + 5]];
+    vals[6] = error[coords[i + 6]];
+    vals[7] = error[coords[i + 7]];
+
+    int16x8_t values = vld1q_s16(vals);
+
+    // Widen to int32 and accumulate (split into two 4-element vectors)
+    int32x4_t lo = vmovl_s16(vget_low_s16(values));
+    int32x4_t hi = vmovl_s16(vget_high_s16(values));
+
+    sum_vec1 = vaddq_s32(sum_vec1, lo);
+    sum_vec2 = vaddq_s32(sum_vec2, hi);
+  }
+
+  // Combine and extract sum
+  int32x4_t total_vec = vaddq_s32(sum_vec1, sum_vec2);
+  int32_t temp[4];
+  vst1q_s32(temp, total_vec);
+  sum = temp[0] + temp[1] + temp[2] + temp[3];
+
+#else
+  // Scalar fallback
+  for (; i + 3 < size; i += 4) {
+    sum += error[coords[i]] + error[coords[i + 1]] +
+           error[coords[i + 2]] + error[coords[i + 3]];
+  }
+#endif
+
+  // Handle remaining elements
+  for (; i < size; i++) {
+    sum += error[coords[i]];
+  }
+
+  return (float)sum / size;
+}
+
+// Quantized error update: uses int16_t for 2x SIMD width
+static inline void updateErrorQuantized(int16_t* error, int* coords, int size, int16_t weight) {
+  int i = 0;
+
+#ifdef USE_NEON
+  // NEON version: process 8 int16s at a time (vs 4 floats)
+  int16x8_t weight_vec = vdupq_n_s16(weight);
+
+  for (; i + 7 < size; i += 8) {
+    // Gather 8 values
+    int16_t vals[8];
+    vals[0] = error[coords[i]];
+    vals[1] = error[coords[i + 1]];
+    vals[2] = error[coords[i + 2]];
+    vals[3] = error[coords[i + 3]];
+    vals[4] = error[coords[i + 4]];
+    vals[5] = error[coords[i + 5]];
+    vals[6] = error[coords[i + 6]];
+    vals[7] = error[coords[i + 7]];
+
+    int16x8_t values = vld1q_s16(vals);
+
+    // Subtract weight
+    values = vsubq_s16(values, weight_vec);
+
+    // Scatter back
+    int16_t result[8];
+    vst1q_s16(result, values);
+    error[coords[i]] = result[0];
+    error[coords[i + 1]] = result[1];
+    error[coords[i + 2]] = result[2];
+    error[coords[i + 3]] = result[3];
+    error[coords[i + 4]] = result[4];
+    error[coords[i + 5]] = result[5];
+    error[coords[i + 6]] = result[6];
+    error[coords[i + 7]] = result[7];
+  }
+
+#else
+  // Scalar fallback
+  for (; i + 3 < size; i += 4) {
+    error[coords[i]] -= weight;
+    error[coords[i + 1]] -= weight;
+    error[coords[i + 2]] -= weight;
+    error[coords[i + 3]] -= weight;
+  }
+#endif
+
+  // Handle remaining elements
+  for (; i < size; i++) {
+    error[coords[i]] -= weight;
+  }
+}
+
+// Quantized version of calculateLines using int16_t (2x faster on NEON)
+static int* calculateLinesQuantized(FastStringArtGenerator* gen, int* lineCount) {
+  int* lineSequence = malloc((gen->config.maxLines + 1) * sizeof(int));
+  lineSequence[0] = 0;
+  *lineCount = 1;
+
+  // Allocate quantized error image (int16_t instead of float)
+  int16_t* errorImageQ = malloc(gen->imgSizeSq * sizeof(int16_t));
+
+  // Quantize: convert float [0-255] to int16_t
+  for (int i = 0; i < gen->imgSizeSq; i++) {
+    errorImageQ[i] = (int16_t)(255.0f - gen->sourceImage[i]);
+  }
+
+  int currentPin = 0;
+  int lastPins[20];
+  for (int i = 0; i < 20; i++)
+    lastPins[i] = -1;
+
+  int16_t lineWeightQ = (int16_t)gen->config.lineWeight;
+
+  for (int i = 0; i < gen->config.maxLines; i++) {
+    int bestPin = -1;
+    float maxErr = 0.0f;
+    int bestIndex = 0;
+
+    for (int k = 0; k < gen->validCounts[currentPin]; k++) {
+      int testPin = gen->validPins[currentPin * gen->config.pins + k];
+
+      int skip = 0;
+      for (int j = 0; j < 20; j++) {
+        if (lastPins[j] == testPin) {
+          skip = 1;
+          break;
+        }
+      }
+      if (skip)
+        continue;
+
+      // Use consistent indexing (smaller pin first)
+      int index = (currentPin < testPin)
+                      ? (currentPin * gen->config.pins + testPin)
+                      : (testPin * gen->config.pins + currentPin);
+      float lineErr =
+          getLineErrorQuantized(errorImageQ, gen->lineCache[index].coords,
+                                gen->lineCache[index].size);
+
+      if (lineErr > maxErr) {
+        maxErr = lineErr;
+        bestPin = testPin;
+        bestIndex = index;
+      }
+    }
+
+    if (bestPin == -1)
+      break;
+
+    lineSequence[*lineCount] = bestPin;
+    (*lineCount)++;
+
+    updateErrorQuantized(errorImageQ, gen->lineCache[bestIndex].coords,
+                         gen->lineCache[bestIndex].size, lineWeightQ);
+
+    memmove(lastPins, lastPins + 1, 19 * sizeof(int));
+    lastPins[19] = bestPin;
+    currentPin = bestPin;
+  }
+
+  free(errorImageQ);
+  return lineSequence;
+}
+
+// Float version of calculateLines
+static int* calculateLinesFloat(FastStringArtGenerator* gen, int* lineCount) {
   int* lineSequence = malloc((gen->config.maxLines + 1) * sizeof(int));
   lineSequence[0] = 0;
   *lineCount = 1;
@@ -270,6 +675,15 @@ int* calculateLines(FastStringArtGenerator* gen, int* lineCount) {
   }
 
   return lineSequence;
+}
+
+// Dispatcher: choose quantized or float version based on config
+int* calculateLines(FastStringArtGenerator* gen, int* lineCount) {
+  if (gen->config.useQuantized) {
+    return calculateLinesQuantized(gen, lineCount);
+  } else {
+    return calculateLinesFloat(gen, lineCount);
+  }
 }
 
 void drawLineAlpha(unsigned char* img,

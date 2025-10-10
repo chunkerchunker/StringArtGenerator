@@ -21,7 +21,9 @@ int initStringArt(int pins,
                    .outputSize = targetSize,
                    .lineWeight = lineWeight,
                    .outputWeight = outputWeight,
-                   .minDistance = minDistance};
+                   .minDistance = minDistance,
+                   .quiet = 1,
+                   .useQuantized = 0};
 
   // Check if we can reuse existing pin/line cache
   int needsReinit = 0;
