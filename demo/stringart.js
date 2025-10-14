@@ -23,6 +23,15 @@ let imgZoomLevel = 1;
 let imgPanX = 0;
 let imgPanY = 0;
 
+// AbortControllers for event listener cleanup
+let zoomPanAbortController = null;
+let imgZoomPanAbortController = null;
+
+// FPS tracking
+let lastFrameTime = performance.now();
+let frameCount = 0;
+let fps = 0;
+
 // Store original image and display info for cropping
 let originalImage = null;
 let imageDisplayInfo = null;
@@ -33,7 +42,7 @@ document.addEventListener("DOMContentLoaded", () => {
         "pins",
         "maxLines",
         "targetSize",
-        "outputSize",
+        "renderLineWidth",
         "lineWeight",
         "minDistance",
         "webcamContrast",
@@ -45,16 +54,14 @@ document.addEventListener("DOMContentLoaded", () => {
         input.addEventListener("input", () => {
             display.textContent = input.value;
 
-            // Update SVG dynamically for output parameters if we have generated data
-            if (currentLineSequence && id === "outputSize") {
-                const outputSize = parseInt(
-                    document.getElementById("outputSize").value,
+            // Update canvas dynamically for render line width if we have generated data
+            if (currentLineSequence && id === "renderLineWidth") {
+                const renderLineWidth = parseFloat(
+                    document.getElementById("renderLineWidth").value,
                 );
 
-                // Try efficient update first, fallback to full re-render if needed
-                if (!updateSVGParameters(outputSize)) {
-                    updateSVGOutput();
-                }
+                // Re-render with new line width
+                updateCanvasLineWidth(renderLineWidth);
             }
 
             // Update image canvas when targetSize changes
@@ -100,7 +107,8 @@ document.addEventListener("DOMContentLoaded", () => {
                 autoLineWeightCheckbox.checked = false;
                 lineWeightSlider.disabled = false;
                 lineWeightValue.textContent = lineWeightSlider.value;
-                lineWeightSlider.style.opacity = "1";
+                lineWeightSlider.classList.remove("opacity-50");
+                lineWeightSlider.classList.add("opacity-100");
 
                 // Resume webcam processing
                 if (webcamStream && webcamMode) {
@@ -113,13 +121,15 @@ document.addEventListener("DOMContentLoaded", () => {
             // Normal mode (not webcam)
             lineWeightSlider.disabled = true;
             lineWeightValue.textContent = "Auto";
-            lineWeightSlider.style.opacity = "0.5";
+            lineWeightSlider.classList.remove("opacity-100");
+            lineWeightSlider.classList.add("opacity-50");
             // Only trigger auto-regeneration when enabling auto mode
             scheduleAutoRegeneration();
         } else {
             lineWeightSlider.disabled = false;
             lineWeightValue.textContent = lineWeightSlider.value;
-            lineWeightSlider.style.opacity = "1";
+            lineWeightSlider.classList.remove("opacity-50");
+            lineWeightSlider.classList.add("opacity-100");
             // Don't regenerate when disabling auto mode
         }
     });
@@ -211,20 +221,12 @@ function displayImageWithZoom(img) {
     // Create zoomable container
     const zoomableContainer = document.createElement("div");
     zoomableContainer.className = "img-zoomable-container";
-    zoomableContainer.style.position = "relative";
     zoomableContainer.style.width = targetSize + "px";
     zoomableContainer.style.height = targetSize + "px";
-    zoomableContainer.style.margin = "20px auto";
-    zoomableContainer.style.overflow = "hidden";
-    zoomableContainer.style.cursor = "grab";
-    zoomableContainer.style.border = "1px solid #ddd";
-    zoomableContainer.style.borderRadius = "8px";
 
     // Create content wrapper
     const zoomableContent = document.createElement("div");
     zoomableContent.className = "img-zoomable-content";
-    zoomableContent.style.position = "absolute";
-    zoomableContent.style.transformOrigin = "center center";
 
     // Calculate scale to fit image in square (this becomes our base scale)
     const baseScale = Math.min(targetSize / img.width, targetSize / img.height);
@@ -325,7 +327,7 @@ function scheduleAutoRegeneration() {
         return;
     }
 
-    // Only regenerate if the SVG tab is active
+    // Only regenerate if the result tab is active
     const resultTab = document.getElementById("resultTab");
     if (!resultTab || !resultTab.classList.contains("active")) {
         return;
@@ -406,7 +408,7 @@ async function generateWithAutoLineWeight() {
 
     // Disable all controls during binary search
     const controls = [
-        "pins", "maxLines", "targetSize", "minDistance", "outputSize",
+        "pins", "maxLines", "targetSize", "minDistance", "renderLineWidth",
         "lineWeight", "autoLineWeight", "autoRegenerate", "imageInput"
     ];
     controls.forEach(id => {
@@ -485,7 +487,7 @@ async function generateWithAutoLineWeight() {
                     currentLineSequence = Array.from(lineSequence);
                     currentPinCount = pins;
                     currentLineCount = totalLineCount;
-                    updateSVGOutput();
+                    updateOutputDisplay();
                 }
             }
 
@@ -549,7 +551,7 @@ async function generateWithAutoLineWeight() {
             currentLineSequence = Array.from(lineSequence);
             currentPinCount = pins;
             currentLineCount = totalLineCount;
-            updateSVGOutput();
+            updateOutputDisplay();
         }
 
         // Update the line weight slider to show the found value
@@ -592,7 +594,7 @@ async function generateWithAutoLineWeight() {
 
         // Re-enable all controls
         const controls = [
-            "pins", "maxLines", "targetSize", "minDistance", "outputSize",
+            "pins", "maxLines", "targetSize", "minDistance", "renderLineWidth",
             "autoRegenerate", "imageInput", "autoLineWeight"
         ];
         controls.forEach(id => {
@@ -855,7 +857,7 @@ async function generateStringArt() {
         }
 
         showProgress(80);
-        showStatus("Generating SVG output...", "loading");
+        showStatus("Generating output...", "loading");
 
         // Get the line sequence instead of rendered image
         const lineSequencePtr = stringArtModule.ccall(
@@ -887,8 +889,8 @@ async function generateStringArt() {
         currentPinCount = pins;
         currentLineCount = totalLineCount;
 
-        // Create and display initial SVG
-        updateSVGOutput();
+        // Create and display initial output
+        updateOutputDisplay();
 
         showProgress(100);
         showStatus(
@@ -1139,59 +1141,22 @@ function calculatePinCoordinates(pinCount, outputSize) {
     return pinCoords;
 }
 
-// Update SVG parameters efficiently without full re-render
-function updateSVGParameters(outputSize) {
-    const svg = document.getElementById("stringArtSVG");
-    if (!svg || !currentLineSequence) return false;
+// Update canvas line width efficiently without full re-render
+function updateCanvasLineWidth(lineWidth) {
+    const canvas = document.getElementById("stringArtCanvas");
+    if (!canvas || !currentLineSequence) return false;
 
-    const currentSize = parseInt(svg.getAttribute("width"));
-    const sizeChanged = currentSize !== outputSize;
+    // Use fixed high-res canvas size
+    const canvasSize = 8000;
 
-    // Update SVG dimensions if size changed
-    if (sizeChanged) {
-        svg.setAttribute("width", outputSize);
-        svg.setAttribute("height", outputSize);
-        svg.setAttribute("viewBox", `0 0 ${outputSize} ${outputSize}`);
-
-        // Recalculate pin coordinates for new size
-        const pinCoords = calculatePinCoordinates(currentPinCount, outputSize);
-
-        // Update pin positions
-        const pins = svg.querySelectorAll("circle");
-        pins.forEach((pin, index) => {
-            if (index < pinCoords.length) {
-                pin.setAttribute("cx", pinCoords[index].x);
-                pin.setAttribute("cy", pinCoords[index].y);
-            }
-        });
-
-        // Update line positions
-        const lines = svg.querySelectorAll("line");
-        lines.forEach((line, index) => {
-            if (index < currentLineSequence.length - 1) {
-                const fromPin = currentLineSequence[index];
-                const toPin = currentLineSequence[index + 1];
-
-                if (
-                    fromPin >= 0 &&
-                    fromPin < pinCoords.length &&
-                    toPin >= 0 &&
-                    toPin < pinCoords.length
-                ) {
-                    line.setAttribute("x1", pinCoords[fromPin].x);
-                    line.setAttribute("y1", pinCoords[fromPin].y);
-                    line.setAttribute("x2", pinCoords[toPin].x);
-                    line.setAttribute("y2", pinCoords[toPin].y);
-                }
-            }
-        });
-    }
+    // Re-render with new line width
+    renderStringsToCanvas(canvas, currentLineSequence, currentPinCount, canvasSize, lineWidth);
 
     return true; // Successfully updated in-place
 }
 
-// Update SVG output using current slider values
-function updateSVGOutput() {
+// Update canvas output using current slider values
+function updateOutputDisplay() {
     if (!currentLineSequence) return;
 
     // Reset zoom and pan
@@ -1199,21 +1164,15 @@ function updateSVGOutput() {
     panX = 0;
     panY = 0;
 
-    // Get current slider values
-    const outputSize = parseInt(document.getElementById("outputSize").value);
+    // Use fixed high-res canvas size for quality
+    const canvasSize = 8000;
+    const renderLineWidth = parseFloat(document.getElementById("renderLineWidth").value);
 
-    // Create SVG element
-    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    svg.setAttribute("width", outputSize);
-    svg.setAttribute("height", outputSize);
-    svg.setAttribute("viewBox", `0 0 ${outputSize} ${outputSize}`);
-    svg.style.background = "white";
-
-    // Calculate pin coordinates for current output size
-    const pinCoords = calculatePinCoordinates(currentPinCount, outputSize);
-
-    // Render lines using SVG
-    renderStringsToSVG(svg, currentLineSequence, pinCoords);
+    // Create canvas element
+    const canvas = document.createElement("canvas");
+    canvas.id = "stringArtCanvas";
+    canvas.width = canvasSize;
+    canvas.height = canvasSize;
 
     // Update display in result tab
     const resultTab = document.getElementById("resultTab");
@@ -1222,60 +1181,59 @@ function updateSVGOutput() {
     // Create zoomable container
     const zoomableContainer = document.createElement("div");
     zoomableContainer.className = "zoomable-container";
-    zoomableContainer.style.position = "relative";
-    zoomableContainer.style.width = "100%";
-    zoomableContainer.style.height = "100%";
 
     const zoomableContent = document.createElement("div");
     zoomableContent.className = "zoomable-content";
-    zoomableContent.style.display = "flex";
-    zoomableContent.style.alignItems = "center";
-    zoomableContent.style.justifyContent = "center";
-    zoomableContent.style.height = "100%";
 
-    zoomableContent.appendChild(svg);
+    zoomableContent.appendChild(canvas);
 
-    // Add zoom controls
-    const zoomControls = document.createElement("div");
-    zoomControls.className = "zoom-controls";
-    zoomControls.innerHTML = `
-        <button class="zoom-btn" onclick="adjustZoom(0.2)">+</button>
-        <button class="zoom-btn" onclick="adjustZoom(-0.2)">−</button>
-        <button class="zoom-btn" onclick="resetZoom()">Reset</button>
-    `;
+    // Add zoom controls (only if not in webcam mode)
+    if (!webcamMode) {
+        const zoomControls = document.createElement("div");
+        zoomControls.className = "zoom-controls";
+        zoomControls.innerHTML = `
+            <button class="zoom-btn" onclick="adjustZoom(0.2)">+</button>
+            <button class="zoom-btn" onclick="adjustZoom(-0.2)">−</button>
+            <button class="zoom-btn" onclick="resetZoom()">Reset</button>
+        `;
+        zoomableContainer.appendChild(zoomControls);
+    }
 
-    // Add zoom info
-    const zoomInfo = document.createElement("div");
-    zoomInfo.className = "zoom-info";
-    zoomInfo.id = "zoomInfo";
-    zoomInfo.textContent = "Zoom: 100% | Cmd+Scroll to zoom, Scroll to pan";
+    // Add zoom info (only if not in webcam mode)
+    if (!webcamMode) {
+        const zoomInfo = document.createElement("div");
+        zoomInfo.className = "zoom-info";
+        zoomInfo.id = "zoomInfo";
+        zoomInfo.textContent = "Zoom: 100% | Cmd+Scroll to zoom, Drag to pan";
+        zoomableContainer.appendChild(zoomInfo);
+    }
+
+    // Add FPS indicator (only in webcam mode)
+    if (webcamMode) {
+        const fpsIndicator = document.createElement("div");
+        fpsIndicator.className = "fps-indicator";
+        fpsIndicator.id = "fpsIndicator";
+        fpsIndicator.textContent = "FPS: --";
+        zoomableContainer.appendChild(fpsIndicator);
+    }
 
     zoomableContainer.appendChild(zoomableContent);
-    zoomableContainer.appendChild(zoomControls);
-    zoomableContainer.appendChild(zoomInfo);
 
     // Add download section with line count and button
     const downloadSection = document.createElement("div");
     downloadSection.className = "download-section";
-    downloadSection.style.position = "absolute";
-    downloadSection.style.bottom = "20px";
-    downloadSection.style.right = "20px";
-    downloadSection.style.zIndex = "100";
-    downloadSection.style.textAlign = "center";
 
     // Add line count message
     const lineCountMsg = document.createElement("div");
-    lineCountMsg.style.color = "#666";
-    lineCountMsg.style.fontSize = "14px";
-    lineCountMsg.style.marginBottom = "8px";
+    lineCountMsg.className = "line-count-msg";
     lineCountMsg.textContent = `${currentLineCount - 1} lines`;
     downloadSection.appendChild(lineCountMsg);
 
     const downloadBtn = document.createElement("button");
     downloadBtn.className = "download-btn";
-    downloadBtn.textContent = "Download as SVG";
+    downloadBtn.textContent = "Download as PNG";
     downloadBtn.onclick = () => {
-        downloadSVGWithStyles(svg);
+        downloadCanvasAsPNG(canvas);
     };
     downloadSection.appendChild(downloadBtn);
 
@@ -1290,10 +1248,15 @@ function updateSVGOutput() {
 
     resultTab.appendChild(zoomableContainer);
 
-    // Add event listeners for zoom and pan
-    setupZoomAndPan(zoomableContainer, zoomableContent);
+    // Add event listeners for zoom and pan (only if not in webcam mode)
+    if (!webcamMode) {
+        setupZoomAndPan(zoomableContainer, zoomableContent);
+    }
 
-    // Switch to result tab when SVG is updated
+    // NOW render lines to canvas (after FPS indicator is in the DOM)
+    renderStringsToCanvas(canvas, currentLineSequence, currentPinCount, canvasSize, renderLineWidth);
+
+    // Switch to result tab when canvas is updated
     switchTabProgrammatically("result");
 }
 
@@ -1334,6 +1297,15 @@ function toggleSidebar() {
 
 // Setup zoom and pan functionality
 function setupZoomAndPan(container, content) {
+    // Clean up previous event listeners
+    if (zoomPanAbortController) {
+        zoomPanAbortController.abort();
+    }
+    zoomPanAbortController = new AbortController();
+    const { signal } = zoomPanAbortController;
+
+    container.classList.add("cursor-grab");
+
     // Wheel event for zoom (Ctrl+scroll) and pan (normal scroll)
     container.addEventListener("wheel", (e) => {
         e.preventDefault();
@@ -1353,7 +1325,7 @@ function setupZoomAndPan(container, content) {
             panY -= e.deltaY * panSpeed;
             updateTransform(content);
         }
-    });
+    }, { signal });
 
     // Mouse drag for panning
     let isDragging = false;
@@ -1368,8 +1340,9 @@ function setupZoomAndPan(container, content) {
         startY = e.clientY;
         startPanX = panX;
         startPanY = panY;
-        container.style.cursor = "grabbing";
-    });
+        container.classList.remove("cursor-grab");
+        container.classList.add("cursor-grabbing");
+    }, { signal });
 
     document.addEventListener("mousemove", (e) => {
         if (!isDragging) return;
@@ -1380,14 +1353,15 @@ function setupZoomAndPan(container, content) {
         panX = startPanX + deltaX;
         panY = startPanY + deltaY;
         updateTransform(content);
-    });
+    }, { signal });
 
     document.addEventListener("mouseup", () => {
         if (isDragging) {
             isDragging = false;
-            container.style.cursor = "grab";
+            container.classList.remove("cursor-grabbing");
+            container.classList.add("cursor-grab");
         }
-    });
+    }, { signal });
 }
 
 // Adjust zoom level
@@ -1436,6 +1410,13 @@ function resetZoom() {
 
 // Setup zoom and pan for image
 function setupImageZoomAndPan(container, _content, canvas, img, targetSize) {
+    // Clean up previous event listeners
+    if (imgZoomPanAbortController) {
+        imgZoomPanAbortController.abort();
+    }
+    imgZoomPanAbortController = new AbortController();
+    const { signal } = imgZoomPanAbortController;
+
     const ctx = canvas.getContext("2d");
 
     // Function to redraw image with current zoom and pan
@@ -1507,7 +1488,7 @@ function setupImageZoomAndPan(container, _content, canvas, img, targetSize) {
 
             redrawImage();
         }
-    });
+    }, { signal });
 
     // Mouse drag for panning
     let isDragging = false;
@@ -1522,8 +1503,9 @@ function setupImageZoomAndPan(container, _content, canvas, img, targetSize) {
         startY = e.clientY;
         startPanX = imgPanX;
         startPanY = imgPanY;
-        container.style.cursor = "grabbing";
-    });
+        container.classList.remove("cursor-grab");
+        container.classList.add("cursor-grabbing");
+    }, { signal });
 
     document.addEventListener("mousemove", (e) => {
         if (!isDragging || !container.contains(e.target)) return;
@@ -1553,14 +1535,15 @@ function setupImageZoomAndPan(container, _content, canvas, img, targetSize) {
         }
 
         redrawImage();
-    });
+    }, { signal });
 
     document.addEventListener("mouseup", () => {
         if (isDragging) {
             isDragging = false;
-            container.style.cursor = "grab";
+            container.classList.remove("cursor-grabbing");
+            container.classList.add("cursor-grab");
         }
-    });
+    }, { signal });
 }
 
 // Adjust image zoom level
@@ -1914,12 +1897,17 @@ function getCroppedImageData() {
 // Update CSS transform
 function updateTransform(content) {
     if (content) {
-        content.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`;
+        const canvas = content.querySelector("#stringArtCanvas");
+        if (canvas) {
+            // Apply transform directly to canvas
+            canvas.style.transform = `translate(${panX}px, ${panY}px) scale(${zoomLevel})`;
+            canvas.style.transformOrigin = "center center";
+        }
 
         // Update zoom info
         const zoomInfo = document.getElementById("zoomInfo");
         if (zoomInfo) {
-            zoomInfo.textContent = `Zoom: ${Math.round(zoomLevel * 100)}% | Ctrl+Scroll to zoom, Scroll to pan`;
+            zoomInfo.textContent = `Zoom: ${Math.round(zoomLevel * 100)}% | Cmd+Scroll to zoom, Drag to pan`;
         }
     }
 }
@@ -1950,41 +1938,18 @@ function downloadPinList() {
     // Create and download the text file
     const blob = new Blob([pinListContent], { type: "text/plain" });
     const link = document.createElement("a");
+    const blobUrl = URL.createObjectURL(blob);
     link.download = outname;
-    link.href = URL.createObjectURL(blob);
+    link.href = blobUrl;
     link.click();
+
+    // Revoke the blob URL after a short delay to prevent memory leak
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 100);
 }
 
-// Download SVG with embedded styles for standalone viewing
-function downloadSVGWithStyles(originalSvg) {
-    // Clone the SVG to avoid modifying the original
-    const svgClone = originalSvg.cloneNode(true);
-
-    // Create a style element with the necessary CSS
-    const styleElement = document.createElementNS(
-        "http://www.w3.org/2000/svg",
-        "style",
-    );
-    styleElement.textContent = `
-        line {
-            stroke: black;
-            stroke-width: 1;
-        }
-        circle {
-            fill: black;
-            r: 2;
-        }
-        svg {
-            width: 100%;
-            height: auto;
-            max-height: 100vh;
-        }
-    `;
-
-    // Insert style element as the first child of the SVG
-    svgClone.insertBefore(styleElement, svgClone.firstChild);
-
-    // generate the output filename
+// Download canvas as PNG
+function downloadCanvasAsPNG(canvas) {
+    // Generate the output filename
     const fileInput = document.getElementById("imageInput");
     let baseName = "stringart";
 
@@ -1995,34 +1960,65 @@ function downloadSVGWithStyles(originalSvg) {
         baseName = "webcam-capture";
     }
 
-    const outname = `${baseName}-strings.svg`;
+    const outname = `${baseName}-strings.png`;
 
-    // Serialize and download
-    const svgData = new XMLSerializer().serializeToString(svgClone);
-    const blob = new Blob([svgData], { type: "image/svg+xml" });
-    const link = document.createElement("a");
-    link.download = outname;
-    link.href = URL.createObjectURL(blob);
-    link.click();
+    // Convert canvas to blob and download
+    canvas.toBlob((blob) => {
+        const link = document.createElement("a");
+        const blobUrl = URL.createObjectURL(blob);
+        link.download = outname;
+        link.href = blobUrl;
+        link.click();
+
+        // Revoke the blob URL after a short delay to prevent memory leak
+        setTimeout(() => URL.revokeObjectURL(blobUrl), 100);
+    });
 }
 
-// Render string art lines to SVG
-function renderStringsToSVG(svg, lineSequence, pinCoords) {
-    // Add SVG ID for later reference
-    svg.setAttribute("id", "stringArtSVG");
+// Update FPS counter
+function updateFPS() {
+    const currentTime = performance.now();
+    const deltaTime = currentTime - lastFrameTime;
 
-    // Add pins as small circles with minimal attributes (styling via CSS)
-    for (let i = 0; i < pinCoords.length; i++) {
-        const circle = document.createElementNS(
-            "http://www.w3.org/2000/svg",
-            "circle",
-        );
-        circle.setAttribute("cx", pinCoords[i].x);
-        circle.setAttribute("cy", pinCoords[i].y);
-        svg.appendChild(circle);
+    frameCount++;
+
+    // Update FPS display
+    const fpsIndicator = document.getElementById("fpsIndicator");
+    if (!fpsIndicator) return;
+
+    // Update FPS every second
+    if (deltaTime >= 1000) {
+        fps = Math.round((frameCount * 1000) / deltaTime);
+        fpsIndicator.textContent = `FPS: ${fps}`;
+        frameCount = 0;
+        lastFrameTime = currentTime;
+    } else {
+        // Show tentative FPS even before 1 second passes
+        const tentativeFps = Math.round((frameCount * 1000) / deltaTime);
+        fpsIndicator.textContent = `FPS: ${tentativeFps}`;
     }
+}
 
-    // Add lines between pins with minimal attributes (styling via CSS)
+// Render string art lines to canvas
+function renderStringsToCanvas(canvas, lineSequence, pinCount, canvasSize, lineWidth) {
+    const ctx = canvas.getContext("2d");
+
+    // Clear canvas
+    ctx.fillStyle = "white";
+    ctx.fillRect(0, 0, canvasSize, canvasSize);
+
+    // Calculate pin coordinates
+    const pinCoords = calculatePinCoordinates(pinCount, canvasSize);
+
+    // Use the provided line width directly
+    // Line width is a user parameter now, not based on canvas size
+
+    // Draw lines between pins
+    ctx.strokeStyle = "black";
+    ctx.lineWidth = lineWidth;
+    ctx.lineCap = "round";
+
+    ctx.beginPath();
     for (let i = 0; i < lineSequence.length - 1; i++) {
         const fromPin = lineSequence[i];
         const toPin = lineSequence[i + 1];
@@ -2036,12 +2032,18 @@ function renderStringsToSVG(svg, lineSequence, pinCoords) {
             continue; // Skip invalid pin indices
         }
 
-        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-        line.setAttribute("x1", pinCoords[fromPin].x);
-        line.setAttribute("y1", pinCoords[fromPin].y);
-        line.setAttribute("x2", pinCoords[toPin].x);
-        line.setAttribute("y2", pinCoords[toPin].y);
-        svg.appendChild(line);
+        ctx.moveTo(pinCoords[fromPin].x, pinCoords[fromPin].y);
+        ctx.lineTo(pinCoords[toPin].x, pinCoords[toPin].y);
+    }
+    ctx.stroke();
+
+    // Draw pins as small circles - scale with line width for consistency
+    const pinRadius = Math.max(1, lineWidth * 1.5);
+    ctx.fillStyle = "black";
+    for (let i = 0; i < pinCoords.length; i++) {
+        ctx.beginPath();
+        ctx.arc(pinCoords[i].x, pinCoords[i].y, pinRadius, 0, 2 * Math.PI);
+        ctx.fill();
     }
 }
 
@@ -2052,6 +2054,7 @@ let webcamStream = null;
 let webcamProcessingLoop = null;
 let webcamProcessing = false;
 let lastWebcamFrame = null; // Store last frame as Image object
+let webcamInitialCalibrationDone = false; // Track if we've done initial auto line weight
 
 // biome-ignore lint/correctness/noUnusedVariables: called from html
 function toggleInputMode() {
@@ -2066,6 +2069,20 @@ function toggleInputMode() {
         imageInputGroup.style.display = 'none';
         webcamGroup.style.display = 'block';
 
+        // Update parameters for webcam mode
+        const targetSizeInput = document.getElementById('targetSize');
+        const targetSizeValue = document.getElementById('targetSizeValue');
+        const maxLinesInput = document.getElementById('maxLines');
+        const maxLinesValue = document.getElementById('maxLinesValue');
+
+        targetSizeInput.value = 200;
+        targetSizeValue.textContent = 200;
+        maxLinesInput.value = 2000;
+        maxLinesValue.textContent = 2000;
+
+        // Reset calibration flag
+        webcamInitialCalibrationDone = false;
+
         // Automatically start webcam
         startWebcam();
     } else {
@@ -2075,6 +2092,12 @@ function toggleInputMode() {
         // Stop webcam if running
         if (webcamStream) {
             stopWebcam();
+        }
+
+        // Re-enable pan & zoom controls and hide FPS when switching to static mode
+        // If there's already generated output, update it to show controls
+        if (currentLineSequence) {
+            updateOutputDisplay();
         }
     }
 }
@@ -2091,7 +2114,8 @@ async function startWebcam() {
             autoLineWeightCheckbox.checked = false;
             lineWeightSlider.disabled = false;
             lineWeightValue.textContent = lineWeightSlider.value;
-            lineWeightSlider.style.opacity = '1';
+            lineWeightSlider.classList.remove("opacity-50");
+            lineWeightSlider.classList.add("opacity-100");
         }
 
         const video = document.getElementById('webcamVideo');
@@ -2159,6 +2183,13 @@ function stopWebcam() {
             displayImageWithZoom(img);
             showStatus('Last webcam frame saved', 'success');
             setTimeout(() => hideStatus(), 2000);
+            // Clear the onload handler to allow GC
+            img.onload = null;
+        };
+        img.onerror = () => {
+            console.warn("Failed to capture last webcam frame");
+            // Clear the error handler to allow GC
+            img.onerror = null;
         };
         img.src = canvas.toDataURL();
     }
@@ -2191,6 +2222,8 @@ function startWebcamProcessing() {
 
             try {
                 await processWebcamFrame();
+                // Update FPS after entire frame processing (WASM + rendering)
+                updateFPS();
             } catch (error) {
                 console.error('Frame processing error:', error);
                 showStatus(`Processing error: ${error.message}`, 'error');
@@ -2212,6 +2245,27 @@ async function processWebcamFrame() {
 
     if (!video.videoWidth || !video.videoHeight) {
         return; // Video not ready
+    }
+
+    // Check if we need to do initial calibration
+    if (!webcamInitialCalibrationDone && lastWebcamFrame) {
+        webcamInitialCalibrationDone = true;
+
+        // Pause the processing loop
+        if (webcamProcessingLoop) {
+            cancelAnimationFrame(webcamProcessingLoop);
+            webcamProcessingLoop = null;
+        }
+
+        // Run auto line weight calibration
+        await generateWithAutoLineWeight();
+
+        // Resume processing loop
+        if (webcamStream && webcamMode) {
+            startWebcamProcessing();
+        }
+
+        return;
     }
 
     // Get target size
@@ -2259,6 +2313,13 @@ async function processWebcamFrame() {
             lastWebcamFrame = img;
             originalImage = img;
             hasInitialImage = true;
+            // Clear the onload handler to allow GC
+            img.onload = null;
+        };
+        img.onerror = () => {
+            console.warn("Failed to load webcam frame");
+            // Clear the error handler to allow GC
+            img.onerror = null;
         };
         img.src = dataURL;
     }
@@ -2337,7 +2398,7 @@ async function processWebcamFrame() {
         currentLineSequence = Array.from(lineSequence);
         currentPinCount = pins;
         currentLineCount = totalLineCount;
-        updateSVGOutput();
+        updateOutputDisplay();
     }
 
     // Cleanup
