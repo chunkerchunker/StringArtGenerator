@@ -1,7 +1,7 @@
-var StringArtModule = null;
-let stringArtModule = null;
+import * as WebGPUProcessor from "./webgpu-processor.js";
+
 let isProcessing = false;
-let runCount = 0;
+const runCount = 0;
 let isAutoCancelled = false;
 
 // Global storage for generated string art data
@@ -134,53 +134,66 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
-    // Load the WASM module
-    loadWasmModule();
+    // Initialize WebGPU
+    initializeWebGPU();
+
+    // Add window resize listener to update canvas size responsively
+    let resizeTimeout = null;
+    window.addEventListener('resize', () => {
+        // Debounce resize events
+        if (resizeTimeout) {
+            clearTimeout(resizeTimeout);
+        }
+
+        resizeTimeout = setTimeout(() => {
+            // Only update if we have generated string art and result tab is active
+            const resultTab = document.getElementById('resultTab');
+            if (currentLineSequence && resultTab && resultTab.classList.contains('active')) {
+                // Wait for browser to reflow layout before reading dimensions
+                requestAnimationFrame(() => {
+                    updateOutputDisplay();
+                });
+            }
+        }, 150); // 150ms debounce delay
+    });
 });
 
-async function loadWasmModule() {
+async function initializeWebGPU() {
     try {
-        showStatus("Loading WASM module...", "loading");
+        showStatus("Initializing WebGPU...", "loading");
 
-        // Wait for StringArtModule to be available
-        let attempts = 0;
-        while (typeof StringArtModule === "undefined" && attempts < 50) {
-            await new Promise((resolve) => setTimeout(resolve, 100));
-            attempts++;
-        }
-
-        if (typeof StringArtModule !== "undefined") {
-            console.log("StringArtModule found, initializing...");
-            stringArtModule = await StringArtModule();
-
-            showStatus("WASM module loaded successfully!", "success");
-            setTimeout(() => hideStatus(), 2000);
-        } else {
+        // Check WebGPU support
+        if (!navigator.gpu) {
             throw new Error(
-                "StringArtModule not found. Make sure stringart.wasm.js is loaded.",
+                "WebGPU not supported in this browser. Please use Chrome 113+ or Safari 18+",
             );
         }
+
+        showStatus("WebGPU initialized successfully!", "success");
+        setTimeout(() => hideStatus(), 2000);
     } catch (error) {
-        showStatus(`Error loading WASM module: ${error.message}`, "error");
-        console.error("WASM loading error:", error);
+        showStatus(`Error initializing WebGPU: ${error.message}`, "error");
+        console.error("WebGPU initialization error:", error);
     }
 }
 
 // Tab switching function
 // biome-ignore lint/correctness/noUnusedVariables: called from html
 function switchTab(tabName) {
-    // Remove active class from all tabs and tab contents
-    document
-        .querySelectorAll(".tab")
-        .forEach((tab) => tab.classList.remove("active"));
-    document
-        .querySelectorAll(".tab-content")
-        .forEach((content) => content.classList.remove("active"));
-
-    // Add active class to clicked tab and corresponding content
-    event.target.classList.add("active");
-    document.getElementById(`${tabName}Tab`).classList.add("active");
+    switchTabProgrammatically(tabName);
 }
+
+// Export functions to window for HTML onclick handlers
+window.switchTab = switchTab;
+window.generateStringArt = generateStringArt;
+window.toggleSidebar = toggleSidebar;
+window.adjustZoom = adjustZoom;
+window.resetZoom = resetZoom;
+window.adjustImgZoom = adjustImgZoom;
+window.resetImgZoom = resetImgZoom;
+window.toggleInputMode = toggleInputMode;
+window.startWebcam = startWebcam;
+window.stopWebcam = stopWebcam;
 
 document.getElementById("imageInput").addEventListener("change", (e) => {
     const file = e.target.files[0];
@@ -358,26 +371,13 @@ async function generateWithAutoLineWeight() {
         return;
     }
 
-    if (!stringArtModule || !stringArtModule._malloc || !stringArtModule.ccall) {
-        showStatus("WASM module not ready. Please wait and try again.", "error");
+    // Check WebGPU support
+    if (!navigator.gpu) {
+        showStatus(
+            "WebGPU not supported. Please use a compatible browser.",
+            "error",
+        );
         return;
-    }
-
-    // Ensure HEAPU8 is ready
-    if (!stringArtModule.HEAPU8) {
-        try {
-            const testPtr = stringArtModule._malloc(1);
-            if (testPtr !== 0) {
-                stringArtModule._free(testPtr);
-            }
-        } catch (e) {
-            console.log("Error during memory test:", e);
-        }
-
-        if (!stringArtModule.HEAPU8) {
-            showStatus("WASM memory not ready. Please try again.", "error");
-            return;
-        }
     }
 
     isProcessing = true;
@@ -408,10 +408,17 @@ async function generateWithAutoLineWeight() {
 
     // Disable all controls during binary search
     const controls = [
-        "pins", "maxLines", "targetSize", "minDistance", "renderLineWidth",
-        "lineWeight", "autoLineWeight", "autoRegenerate", "imageInput"
+        "pins",
+        "maxLines",
+        "targetSize",
+        "minDistance",
+        "renderLineWidth",
+        "lineWeight",
+        "autoLineWeight",
+        "autoRegenerate",
+        "imageInput",
     ];
-    controls.forEach(id => {
+    controls.forEach((id) => {
         const element = document.getElementById(id);
         if (element) element.disabled = true;
     });
@@ -439,56 +446,45 @@ async function generateWithAutoLineWeight() {
         let iteration = 0;
         const maxIterations = 10;
 
-        console.log(`Starting binary search for target ${targetMaxLines} lines (lower weight = more lines)`);
+        console.log(
+            `Starting binary search for target ${targetMaxLines} lines (lower weight = more lines)`,
+        );
 
         while (low <= high && iteration < maxIterations && !isAutoCancelled) {
             const mid = Math.floor((low + high) / 2);
             iteration++;
 
-            showStatus(`Testing weight ${mid} (iteration ${iteration})...`, "loading");
+            showStatus(
+                `Testing weight ${mid} (iteration ${iteration})...`,
+                "loading",
+            );
             showProgress((iteration / maxIterations) * 90);
 
-            // Initialize with current weight
-            const initResult = stringArtModule.ccall(
-                "initStringArt",
-                "number",
-                ["number", "number", "number", "number", "number", "number"],
-                [pins, targetMaxLines, targetSize, mid, mid, minDistance],
-            );
-
-            if (initResult < 1) {
-                throw new Error("Failed to initialize string art generator");
-            }
-
             // Process image with current weight
-            await new Promise(resolve => setTimeout(resolve, 50)); // Small delay for UI update
+            await new Promise((resolve) => setTimeout(resolve, 50)); // Small delay for UI update
 
-            const lineCount = stringArtModule.ccall(
-                "processImage",
-                "number",
-                ["number", "number", "number", "number"],
-                [imageData.dataPtr, imageData.width, imageData.height, imageData.channels],
+            const config = {
+                imgSize: targetSize,
+                pins: pins,
+                minDistance: minDistance,
+                maxLines: targetMaxLines,
+                lineWeight: mid,
+                iterationsPerDispatch: 100,
+            };
+
+            const result = await WebGPUProcessor.processImage(imageData, config);
+            const lineCount = result.lineCount;
+
+            console.log(
+                `Weight ${mid}: ${lineCount} lines (target: ${targetMaxLines})`,
             );
-
-            console.log(`Weight ${mid}: ${lineCount} lines (target: ${targetMaxLines})`);
 
             // Update the display with current result
             if (lineCount > 0) {
-                currentLineSequence = null; // Clear to force update
-                const lineSequencePtr = stringArtModule.ccall("getLineSequence", "number", [], []);
-                const totalLineCount = stringArtModule.ccall("getLineCount", "number", [], []);
-
-                if (lineSequencePtr !== 0 && totalLineCount > 0) {
-                    const lineSequence = new Int32Array(
-                        stringArtModule.HEAPU8.buffer,
-                        lineSequencePtr,
-                        totalLineCount,
-                    );
-                    currentLineSequence = Array.from(lineSequence);
-                    currentPinCount = pins;
-                    currentLineCount = totalLineCount;
-                    updateOutputDisplay();
-                }
+                currentLineSequence = result.lineSequence;
+                currentPinCount = pins;
+                currentLineCount = lineCount;
+                updateOutputDisplay();
             }
 
             // Update binary search bounds (lower weight = more lines)
@@ -520,39 +516,26 @@ async function generateWithAutoLineWeight() {
         showStatus(`Finalizing with optimal weight ${bestWeight}...`, "loading");
         showProgress(95);
 
-        const initResult = stringArtModule.ccall(
-            "initStringArt",
-            "number",
-            ["number", "number", "number", "number", "number", "number"],
-            [pins, targetMaxLines, targetSize, bestWeight, bestWeight, minDistance],
+        const finalConfig = {
+            imgSize: targetSize,
+            pins: pins,
+            minDistance: minDistance,
+            maxLines: targetMaxLines,
+            lineWeight: bestWeight,
+            iterationsPerDispatch: 100,
+        };
+
+        const finalResult = await WebGPUProcessor.processImage(
+            imageData,
+            finalConfig,
         );
+        const finalLineCount = finalResult.lineCount;
 
-        if (initResult < 1) {
-            throw new Error("Failed to initialize with optimal weight");
-        }
-
-        const finalLineCount = stringArtModule.ccall(
-            "processImage",
-            "number",
-            ["number", "number", "number", "number"],
-            [imageData.dataPtr, imageData.width, imageData.height, imageData.channels],
-        );
-
-        // Get final result
-        const lineSequencePtr = stringArtModule.ccall("getLineSequence", "number", [], []);
-        const totalLineCount = stringArtModule.ccall("getLineCount", "number", [], []);
-
-        if (lineSequencePtr !== 0 && totalLineCount > 0) {
-            const lineSequence = new Int32Array(
-                stringArtModule.HEAPU8.buffer,
-                lineSequencePtr,
-                totalLineCount,
-            );
-            currentLineSequence = Array.from(lineSequence);
-            currentPinCount = pins;
-            currentLineCount = totalLineCount;
-            updateOutputDisplay();
-        }
+        // Update with final result
+        currentLineSequence = finalResult.lineSequence;
+        currentPinCount = pins;
+        currentLineCount = finalLineCount;
+        updateOutputDisplay();
 
         // Update the line weight slider to show the found value
         const lineWeightSlider = document.getElementById("lineWeight");
@@ -563,11 +546,8 @@ async function generateWithAutoLineWeight() {
         showProgress(100);
         showStatus(
             `Found minimum weight: ${bestWeight} for ${finalLineCount} lines (target: ≤${targetMaxLines})`,
-            "success"
+            "success",
         );
-
-        // Cleanup
-        stringArtModule._free(imageData.dataPtr);
 
         setTimeout(() => hideStatus(), 3000);
     } catch (error) {
@@ -575,12 +555,6 @@ async function generateWithAutoLineWeight() {
             showStatus(`Error during auto weight search: ${error.message}`, "error");
         }
         console.error("Auto weight search error:", error);
-
-        try {
-            stringArtModule.ccall("cleanup", null, [], []);
-        } catch (e) {
-            console.warn("Emergency cleanup failed:", e);
-        }
     } finally {
         isProcessing = false;
         isAutoCancelled = false;
@@ -594,10 +568,16 @@ async function generateWithAutoLineWeight() {
 
         // Re-enable all controls
         const controls = [
-            "pins", "maxLines", "targetSize", "minDistance", "renderLineWidth",
-            "autoRegenerate", "imageInput", "autoLineWeight"
+            "pins",
+            "maxLines",
+            "targetSize",
+            "minDistance",
+            "renderLineWidth",
+            "autoRegenerate",
+            "imageInput",
+            "autoLineWeight",
         ];
-        controls.forEach(id => {
+        controls.forEach((id) => {
             const element = document.getElementById(id);
             if (element) element.disabled = false;
         });
@@ -643,59 +623,14 @@ async function generateStringArt() {
         return;
     }
 
-    if (!stringArtModule || !stringArtModule._malloc || !stringArtModule.ccall) {
-        showStatus("WASM module not ready. Please wait and try again.", "error");
-        console.error("WASM module readiness check failed");
+    // Check WebGPU support
+    if (!navigator.gpu) {
+        showStatus(
+            "WebGPU not supported. Please use a compatible browser.",
+            "error",
+        );
+        console.error("WebGPU not supported");
         return;
-    }
-
-    // Check if HEAPU8 is available, if not, try to create it
-    if (!stringArtModule.HEAPU8) {
-        console.log("HEAPU8 not ready, trying to initialize memory...");
-        showStatus("Initializing WASM memory...", "loading");
-
-        // Try to find memory and create HEAPU8
-        let memory = null;
-
-        // Look for memory in various possible locations
-        if (stringArtModule.wasmMemory) {
-            memory = stringArtModule.wasmMemory;
-        } else if (stringArtModule.memory) {
-            memory = stringArtModule.memory;
-        } else {
-            // Try to access memory through WebAssembly exports
-            console.log("Attempting to access memory through other means...");
-            // Sometimes we need to allocate some memory first to trigger initialization
-            try {
-                const testPtr = stringArtModule._malloc(1);
-                if (testPtr !== 0) {
-                    stringArtModule._free(testPtr);
-                }
-                // Check again after malloc
-                if (stringArtModule.HEAPU8) {
-                    console.log("HEAPU8 became available after malloc");
-                }
-            } catch (e) {
-                console.log("Error during memory test:", e);
-            }
-        }
-
-        if (memory?.buffer && !stringArtModule.HEAPU8) {
-            console.log("Creating HEAPU8 view manually...");
-            stringArtModule.HEAPU8 = new Uint8Array(memory.buffer);
-        }
-
-        if (!stringArtModule.HEAPU8) {
-            showStatus("WASM memory not ready. Please try again.", "error");
-            console.error("HEAPU8 still not available after all attempts");
-            console.log(
-                "Available memory-related properties:",
-                Object.keys(stringArtModule).filter(
-                    (k) => k.toLowerCase().includes("mem") || k.includes("HEAP"),
-                ),
-            );
-            return;
-        }
     }
 
     isProcessing = true;
@@ -749,26 +684,6 @@ async function generateStringArt() {
         if (targetSize < 50 || targetSize > 2000)
             throw new Error("Invalid target size");
 
-        // Initialize the generator
-        console.log("Initializing string art generator...");
-        const initResult = stringArtModule.ccall(
-            "initStringArt",
-            "number",
-            ["number", "number", "number", "number", "number", "number"],
-            [pins, maxLines, targetSize, lineWeight, lineWeight, minDistance],
-        );
-        console.log("Init result:", initResult);
-
-        if (initResult === 2) {
-            console.log("Full reinitialization performed (pin/line cache rebuilt)");
-        } else if (initResult === 1) {
-            console.log("Cache reused (pin/line data preserved)");
-        }
-
-        if (initResult < 1) {
-            throw new Error("Failed to initialize string art generator");
-        }
-
         showProgress(20);
 
         // Load and process image
@@ -782,112 +697,35 @@ async function generateStringArt() {
 
         // Process the image (this is the heavy computation)
         console.log("Starting image processing...");
-        console.log("Parameters:", {
-            dataPtr: imageData.dataPtr,
-            width: imageData.width,
-            height: imageData.height,
-            channels: imageData.channels,
-        });
-
-        // Check memory usage before processing
-        const memUsedBefore = stringArtModule.wasmMemory.buffer.byteLength;
-        console.log(
-            "WASM memory usage before processing:",
-            (memUsedBefore / 1024 / 1024).toFixed(2),
-            "MB",
-        );
-        let memUsedAfter = memUsedBefore; // Initialize to avoid scope issues
 
         // Use setTimeout to yield control back to browser for UI updates
         await new Promise((resolve) => setTimeout(resolve, 100));
 
-        // Add timeout to catch hanging
         const startTime = Date.now();
-        let lineCount;
 
-        try {
-            // Set a timeout for the processing
-            const processPromise = new Promise((resolve, reject) => {
-                try {
-                    const result = stringArtModule.ccall(
-                        "processImage",
-                        "number",
-                        ["number", "number", "number", "number"],
-                        [
-                            imageData.dataPtr,
-                            imageData.width,
-                            imageData.height,
-                            imageData.channels,
-                        ],
-                    );
-                    resolve(result);
-                } catch (error) {
-                    reject(error);
-                }
-            });
+        // Process with WebGPU
+        const config = {
+            imgSize: targetSize,
+            pins: pins,
+            minDistance: minDistance,
+            maxLines: maxLines,
+            lineWeight: lineWeight,
+            iterationsPerDispatch: 100,
+        };
 
-            const timeoutPromise = new Promise((_, reject) => {
-                setTimeout(
-                    () => reject(new Error("Processing timeout after 10 seconds")),
-                    10000,
-                );
-            });
+        const result = await WebGPUProcessor.processImage(imageData, config);
 
-            lineCount = await Promise.race([processPromise, timeoutPromise]);
-
-            const endTime = Date.now();
-            console.log("Processing completed. Line count:", lineCount);
-            console.log("Processing time:", (endTime - startTime) / 1000, "seconds");
-
-            // Check memory usage after processing
-            memUsedAfter = stringArtModule.wasmMemory.buffer.byteLength;
-            console.log(
-                "WASM memory usage after processing:",
-                (memUsedAfter / 1024 / 1024).toFixed(2),
-                "MB",
-            );
-            console.log(
-                "Memory increase during processing:",
-                ((memUsedAfter - memUsedBefore) / 1024 / 1024).toFixed(2),
-                "MB",
-            );
-        } catch (error) {
-            console.error("Processing error:", error);
-            throw error;
-        }
+        const endTime = Date.now();
+        console.log("Processing completed. Line count:", result.lineCount);
+        console.log("Processing time:", (endTime - startTime) / 1000, "seconds");
 
         showProgress(80);
         showStatus("Generating output...", "loading");
 
-        // Get the line sequence instead of rendered image
-        const lineSequencePtr = stringArtModule.ccall(
-            "getLineSequence",
-            "number",
-            [],
-            [],
-        );
-        const totalLineCount = stringArtModule.ccall(
-            "getLineCount",
-            "number",
-            [],
-            [],
-        );
-
-        if (lineSequencePtr === 0 || totalLineCount === 0) {
-            throw new Error("Failed to generate line sequence");
-        }
-
-        // Extract line sequence from WASM memory
-        const lineSequence = new Int32Array(
-            stringArtModule.HEAPU8.buffer,
-            lineSequencePtr,
-            totalLineCount,
-        );
-
         // Store data globally for dynamic updates
-        currentLineSequence = Array.from(lineSequence); // Copy to regular array
+        currentLineSequence = result.lineSequence;
         currentPinCount = pins;
-        currentLineCount = totalLineCount;
+        currentLineCount = result.lineCount;
 
         // Create and display initial output
         updateOutputDisplay();
@@ -898,68 +736,10 @@ async function generateStringArt() {
             "success",
         );
 
-        // Cleanup
-        try {
-            // Force garbage collection if available
-            if (window.gc) {
-                window.gc();
-            }
-        } catch (e) {
-            console.warn("Cleanup failed:", e);
-        }
-
-        try {
-            stringArtModule._free(imageData.dataPtr);
-        } catch (e) {
-            console.warn("Free imageData failed:", e);
-        }
-
-        // Check memory usage after cleanup
-        const memUsedAfterCleanup = stringArtModule.wasmMemory.buffer.byteLength;
-        console.log(
-            "WASM memory usage after cleanup:",
-            (memUsedAfterCleanup / 1024 / 1024).toFixed(2),
-            "MB",
-        );
-        console.log(
-            "Memory freed by cleanup:",
-            ((memUsedAfter - memUsedAfterCleanup) / 1024 / 1024).toFixed(2),
-            "MB",
-        );
-
-        // Increment run count and reload module if memory is getting high
-        runCount++;
-        console.log("Run count:", runCount);
-
-        if (memUsedAfterCleanup > 600 * 1024 * 1024) {
-            // 600MB threshold
-            console.log(
-                "Memory usage high or run limit reached, reloading WASM module...",
-            );
-            showStatus("Refreshing memory...", "loading");
-
-            try {
-                await loadWasmModule();
-                runCount = 0;
-                showStatus("Memory refreshed successfully!", "success");
-                setTimeout(() => hideStatus(), 2000);
-            } catch (e) {
-                console.error("Failed to reload WASM module:", e);
-                showStatus("Memory refresh failed", "error");
-            }
-        }
-
         setTimeout(() => hideStatus(), 3000);
     } catch (error) {
         showStatus(`Error generating string art: ${error.message}`, "error");
         console.error("Generation error:", error);
-
-        // Ensure cleanup even on error
-        try {
-            stringArtModule.ccall("cleanup", null, [], []);
-        } catch (e) {
-            console.warn("Emergency cleanup failed:", e);
-        }
     } finally {
         isProcessing = false;
         generateBtn.disabled = false;
@@ -973,7 +753,7 @@ async function loadImageData(file) {
         // If we have an original image and display info, use the cropped version
         if (originalImage && imageDisplayInfo) {
             try {
-                const croppedImageData = getCroppedImageData();
+                const croppedImageData = getCroppedImageDataForWebGPU();
                 resolve(croppedImageData);
                 return;
             } catch (error) {
@@ -995,43 +775,7 @@ async function loadImageData(file) {
                 ctx.drawImage(img, 0, 0);
 
                 const imageData = ctx.getImageData(0, 0, img.width, img.height);
-                const data = imageData.data;
-
-                if (!stringArtModule || !stringArtModule._malloc) {
-                    reject(new Error("WASM module not ready"));
-                    return;
-                }
-
-                const dataPtr = stringArtModule._malloc(data.length);
-                if (dataPtr === 0) {
-                    reject(new Error("Failed to allocate WASM memory"));
-                    return;
-                }
-
-                let wasmArray;
-                if (stringArtModule.HEAPU8) {
-                    wasmArray = new Uint8Array(
-                        stringArtModule.HEAPU8.buffer,
-                        dataPtr,
-                        data.length,
-                    );
-                } else {
-                    const memory = stringArtModule.wasmMemory || stringArtModule.memory;
-                    if (memory?.buffer) {
-                        wasmArray = new Uint8Array(memory.buffer, dataPtr, data.length);
-                    } else {
-                        reject(new Error("Cannot access WASM memory"));
-                        return;
-                    }
-                }
-                wasmArray.set(data);
-
-                resolve({
-                    dataPtr: dataPtr,
-                    width: img.width,
-                    height: img.height,
-                    channels: 4, // RGBA
-                });
+                resolve(imageData);
                 return;
             } catch (error) {
                 reject(error);
@@ -1055,44 +799,7 @@ async function loadImageData(file) {
                 ctx.drawImage(img, 0, 0);
 
                 const imageData = ctx.getImageData(0, 0, img.width, img.height);
-                const data = imageData.data;
-
-                // Check if WASM module is ready
-                if (!stringArtModule || !stringArtModule._malloc) {
-                    throw new Error("WASM module not ready");
-                }
-
-                // Allocate memory in WASM heap
-                const dataPtr = stringArtModule._malloc(data.length);
-                if (dataPtr === 0) {
-                    throw new Error("Failed to allocate WASM memory");
-                }
-
-                // Copy data to WASM memory - handle if HEAPU8 is not available
-                let wasmArray;
-                if (stringArtModule.HEAPU8) {
-                    wasmArray = new Uint8Array(
-                        stringArtModule.HEAPU8.buffer,
-                        dataPtr,
-                        data.length,
-                    );
-                } else {
-                    // Fallback: create a view directly from the exported memory
-                    const memory = stringArtModule.wasmMemory || stringArtModule.memory;
-                    if (memory?.buffer) {
-                        wasmArray = new Uint8Array(memory.buffer, dataPtr, data.length);
-                    } else {
-                        throw new Error("Cannot access WASM memory");
-                    }
-                }
-                wasmArray.set(data);
-
-                resolve({
-                    dataPtr: dataPtr,
-                    width: img.width,
-                    height: img.height,
-                    channels: 4, // RGBA
-                });
+                resolve(imageData);
             } catch (error) {
                 reject(error);
             }
@@ -1146,11 +853,17 @@ function updateCanvasLineWidth(lineWidth) {
     const canvas = document.getElementById("stringArtCanvas");
     if (!canvas || !currentLineSequence) return false;
 
-    // Use fixed high-res canvas size
-    const canvasSize = 8000;
+    // Use the actual canvas size (not the display size)
+    const canvasSize = canvas.width;
 
     // Re-render with new line width
-    renderStringsToCanvas(canvas, currentLineSequence, currentPinCount, canvasSize, lineWidth);
+    renderStringsToCanvas(
+        canvas,
+        currentLineSequence,
+        currentPinCount,
+        canvasSize,
+        lineWidth,
+    );
 
     return true; // Successfully updated in-place
 }
@@ -1164,9 +877,20 @@ function updateOutputDisplay() {
     panX = 0;
     panY = 0;
 
-    // Use fixed high-res canvas size for quality
-    const canvasSize = 8000;
-    const renderLineWidth = parseFloat(document.getElementById("renderLineWidth").value);
+    // Calculate available space in the tab content
+    const resultTab = document.getElementById("resultTab");
+    const availableWidth = Math.max(resultTab.clientWidth - 40, 200); // Account for padding, min 200
+    const availableHeight = Math.max(resultTab.clientHeight - 40, 200); // Account for padding, min 200
+
+    // Use the smaller dimension to keep it square and fit within container, capped at 2000px
+    const displaySize = Math.min(availableWidth, availableHeight, 2000);
+
+    // Render at 2x for better quality (high DPI displays), minimum 400px
+    const canvasSize = Math.max(displaySize * 2, 400);
+
+    const renderLineWidth = parseFloat(
+        document.getElementById("renderLineWidth").value,
+    );
 
     // Create canvas element
     const canvas = document.createElement("canvas");
@@ -1174,8 +898,11 @@ function updateOutputDisplay() {
     canvas.width = canvasSize;
     canvas.height = canvasSize;
 
-    // Update display in result tab
-    const resultTab = document.getElementById("resultTab");
+    // Set display size
+    canvas.style.width = `${displaySize}px`;
+    canvas.style.height = `${displaySize}px`;
+
+    // Clear result tab content
     resultTab.innerHTML = "";
 
     // Create zoomable container
@@ -1254,7 +981,13 @@ function updateOutputDisplay() {
     }
 
     // NOW render lines to canvas (after FPS indicator is in the DOM)
-    renderStringsToCanvas(canvas, currentLineSequence, currentPinCount, canvasSize, renderLineWidth);
+    renderStringsToCanvas(
+        canvas,
+        currentLineSequence,
+        currentPinCount,
+        canvasSize,
+        renderLineWidth,
+    );
 
     // Switch to result tab when canvas is updated
     switchTabProgrammatically("result");
@@ -1293,6 +1026,17 @@ function toggleSidebar() {
     } else {
         toggleIcon.textContent = "◀";
     }
+
+    // Update canvas size after sidebar toggle (if we have generated string art)
+    const resultTab = document.getElementById('resultTab');
+    if (currentLineSequence && resultTab && resultTab.classList.contains('active')) {
+        // Wait for CSS transition to complete and browser to reflow
+        setTimeout(() => {
+            requestAnimationFrame(() => {
+                updateOutputDisplay();
+            });
+        }, 300); // Match the sidebar transition duration from CSS
+    }
 }
 
 // Setup zoom and pan functionality
@@ -1307,25 +1051,29 @@ function setupZoomAndPan(container, content) {
     container.classList.add("cursor-grab");
 
     // Wheel event for zoom (Ctrl+scroll) and pan (normal scroll)
-    container.addEventListener("wheel", (e) => {
-        e.preventDefault();
+    container.addEventListener(
+        "wheel",
+        (e) => {
+            e.preventDefault();
 
-        if (e.ctrlKey || e.metaKey) {
-            // Zoom functionality
-            const delta = e.deltaY > 0 ? -0.1 : 0.1;
-            const rect = container.getBoundingClientRect();
-            const centerX = rect.width / 2;
-            const centerY = rect.height / 2;
+            if (e.ctrlKey || e.metaKey) {
+                // Zoom functionality
+                const delta = e.deltaY > 0 ? -0.1 : 0.1;
+                const rect = container.getBoundingClientRect();
+                const centerX = rect.width / 2;
+                const centerY = rect.height / 2;
 
-            adjustZoomAt(delta, centerX, centerY);
-        } else {
-            // Pan functionality
-            const panSpeed = 2;
-            panX -= e.deltaX * panSpeed;
-            panY -= e.deltaY * panSpeed;
-            updateTransform(content);
-        }
-    }, { signal });
+                adjustZoomAt(delta, centerX, centerY);
+            } else {
+                // Pan functionality
+                const panSpeed = 2;
+                panX -= e.deltaX * panSpeed;
+                panY -= e.deltaY * panSpeed;
+                updateTransform(content);
+            }
+        },
+        { signal },
+    );
 
     // Mouse drag for panning
     let isDragging = false;
@@ -1334,34 +1082,46 @@ function setupZoomAndPan(container, content) {
     let startPanX = 0;
     let startPanY = 0;
 
-    container.addEventListener("mousedown", (e) => {
-        isDragging = true;
-        startX = e.clientX;
-        startY = e.clientY;
-        startPanX = panX;
-        startPanY = panY;
-        container.classList.remove("cursor-grab");
-        container.classList.add("cursor-grabbing");
-    }, { signal });
+    container.addEventListener(
+        "mousedown",
+        (e) => {
+            isDragging = true;
+            startX = e.clientX;
+            startY = e.clientY;
+            startPanX = panX;
+            startPanY = panY;
+            container.classList.remove("cursor-grab");
+            container.classList.add("cursor-grabbing");
+        },
+        { signal },
+    );
 
-    document.addEventListener("mousemove", (e) => {
-        if (!isDragging) return;
+    document.addEventListener(
+        "mousemove",
+        (e) => {
+            if (!isDragging) return;
 
-        const deltaX = e.clientX - startX;
-        const deltaY = e.clientY - startY;
+            const deltaX = e.clientX - startX;
+            const deltaY = e.clientY - startY;
 
-        panX = startPanX + deltaX;
-        panY = startPanY + deltaY;
-        updateTransform(content);
-    }, { signal });
+            panX = startPanX + deltaX;
+            panY = startPanY + deltaY;
+            updateTransform(content);
+        },
+        { signal },
+    );
 
-    document.addEventListener("mouseup", () => {
-        if (isDragging) {
-            isDragging = false;
-            container.classList.remove("cursor-grabbing");
-            container.classList.add("cursor-grab");
-        }
-    }, { signal });
+    document.addEventListener(
+        "mouseup",
+        () => {
+            if (isDragging) {
+                isDragging = false;
+                container.classList.remove("cursor-grabbing");
+                container.classList.add("cursor-grab");
+            }
+        },
+        { signal },
+    );
 }
 
 // Adjust zoom level
@@ -1451,22 +1211,80 @@ function setupImageZoomAndPan(container, _content, canvas, img, targetSize) {
     };
 
     // Wheel event for zoom (Ctrl+scroll) and pan (normal scroll)
-    container.addEventListener("wheel", (e) => {
-        e.preventDefault();
+    container.addEventListener(
+        "wheel",
+        (e) => {
+            e.preventDefault();
 
-        if (e.ctrlKey || e.metaKey) {
-            // Zoom functionality
-            const delta = e.deltaY > 0 ? -0.1 : 0.1;
-            const rect = container.getBoundingClientRect();
-            const mouseX = e.clientX - rect.left;
-            const mouseY = e.clientY - rect.top;
+            if (e.ctrlKey || e.metaKey) {
+                // Zoom functionality
+                const delta = e.deltaY > 0 ? -0.1 : 0.1;
+                const rect = container.getBoundingClientRect();
+                const mouseX = e.clientX - rect.left;
+                const mouseY = e.clientY - rect.top;
 
-            adjustImgZoomAt(delta, mouseX, mouseY, redrawImage);
-        } else {
-            // Pan functionality
-            const panSpeed = 2;
-            const newPanX = imgPanX - (e.deltaX * panSpeed) / imgZoomLevel;
-            const newPanY = imgPanY - (e.deltaY * panSpeed) / imgZoomLevel;
+                adjustImgZoomAt(delta, mouseX, mouseY, redrawImage);
+            } else {
+                // Pan functionality
+                const panSpeed = 2;
+                const newPanX = imgPanX - (e.deltaX * panSpeed) / imgZoomLevel;
+                const newPanY = imgPanY - (e.deltaY * panSpeed) / imgZoomLevel;
+
+                // Apply pan constraints
+                if (imageDisplayInfo) {
+                    const { baseScaledWidth, baseScaledHeight } = imageDisplayInfo;
+                    const constrained = constrainPan(
+                        newPanX,
+                        newPanY,
+                        targetSize,
+                        imgZoomLevel,
+                        baseScaledWidth,
+                        baseScaledHeight,
+                    );
+                    imgPanX = constrained.x;
+                    imgPanY = constrained.y;
+                } else {
+                    imgPanX = newPanX;
+                    imgPanY = newPanY;
+                }
+
+                redrawImage();
+            }
+        },
+        { signal },
+    );
+
+    // Mouse drag for panning
+    let isDragging = false;
+    let startX = 0;
+    let startY = 0;
+    let startPanX = 0;
+    let startPanY = 0;
+
+    container.addEventListener(
+        "mousedown",
+        (e) => {
+            isDragging = true;
+            startX = e.clientX;
+            startY = e.clientY;
+            startPanX = imgPanX;
+            startPanY = imgPanY;
+            container.classList.remove("cursor-grab");
+            container.classList.add("cursor-grabbing");
+        },
+        { signal },
+    );
+
+    document.addEventListener(
+        "mousemove",
+        (e) => {
+            if (!isDragging || !container.contains(e.target)) return;
+
+            const deltaX = e.clientX - startX;
+            const deltaY = e.clientY - startY;
+
+            const newPanX = startPanX + deltaX / imgZoomLevel;
+            const newPanY = startPanY + deltaY / imgZoomLevel;
 
             // Apply pan constraints
             if (imageDisplayInfo) {
@@ -1487,63 +1305,21 @@ function setupImageZoomAndPan(container, _content, canvas, img, targetSize) {
             }
 
             redrawImage();
-        }
-    }, { signal });
+        },
+        { signal },
+    );
 
-    // Mouse drag for panning
-    let isDragging = false;
-    let startX = 0;
-    let startY = 0;
-    let startPanX = 0;
-    let startPanY = 0;
-
-    container.addEventListener("mousedown", (e) => {
-        isDragging = true;
-        startX = e.clientX;
-        startY = e.clientY;
-        startPanX = imgPanX;
-        startPanY = imgPanY;
-        container.classList.remove("cursor-grab");
-        container.classList.add("cursor-grabbing");
-    }, { signal });
-
-    document.addEventListener("mousemove", (e) => {
-        if (!isDragging || !container.contains(e.target)) return;
-
-        const deltaX = e.clientX - startX;
-        const deltaY = e.clientY - startY;
-
-        const newPanX = startPanX + deltaX / imgZoomLevel;
-        const newPanY = startPanY + deltaY / imgZoomLevel;
-
-        // Apply pan constraints
-        if (imageDisplayInfo) {
-            const { baseScaledWidth, baseScaledHeight } = imageDisplayInfo;
-            const constrained = constrainPan(
-                newPanX,
-                newPanY,
-                targetSize,
-                imgZoomLevel,
-                baseScaledWidth,
-                baseScaledHeight,
-            );
-            imgPanX = constrained.x;
-            imgPanY = constrained.y;
-        } else {
-            imgPanX = newPanX;
-            imgPanY = newPanY;
-        }
-
-        redrawImage();
-    }, { signal });
-
-    document.addEventListener("mouseup", () => {
-        if (isDragging) {
-            isDragging = false;
-            container.classList.remove("cursor-grabbing");
-            container.classList.add("cursor-grab");
-        }
-    }, { signal });
+    document.addEventListener(
+        "mouseup",
+        () => {
+            if (isDragging) {
+                isDragging = false;
+                container.classList.remove("cursor-grabbing");
+                container.classList.add("cursor-grab");
+            }
+        },
+        { signal },
+    );
 }
 
 // Adjust image zoom level
@@ -1814,8 +1590,8 @@ function addCircularLightboxEffect(ctx, size) {
     ctx.restore();
 }
 
-// Get cropped image data based on current pan/zoom state
-function getCroppedImageData() {
+// Get cropped image data based on current pan/zoom state (for WebGPU)
+function getCroppedImageDataForWebGPU() {
     if (!originalImage || !imageDisplayInfo) {
         throw new Error("No original image or display info available");
     }
@@ -1852,46 +1628,9 @@ function getCroppedImageData() {
     );
     tempCtx.restore();
 
-    // Get the image data from the canvas
+    // Get and return the image data from the canvas
     const imageData = tempCtx.getImageData(0, 0, targetSize, targetSize);
-    const data = imageData.data;
-
-    // Check if WASM module is ready
-    if (!stringArtModule || !stringArtModule._malloc) {
-        throw new Error("WASM module not ready");
-    }
-
-    // Allocate memory in WASM heap
-    const dataPtr = stringArtModule._malloc(data.length);
-    if (dataPtr === 0) {
-        throw new Error("Failed to allocate WASM memory");
-    }
-
-    // Copy data to WASM memory
-    let wasmArray;
-    if (stringArtModule.HEAPU8) {
-        wasmArray = new Uint8Array(
-            stringArtModule.HEAPU8.buffer,
-            dataPtr,
-            data.length,
-        );
-    } else {
-        // Fallback: create a view directly from the exported memory
-        const memory = stringArtModule.wasmMemory || stringArtModule.memory;
-        if (memory?.buffer) {
-            wasmArray = new Uint8Array(memory.buffer, dataPtr, data.length);
-        } else {
-            throw new Error("Cannot access WASM memory");
-        }
-    }
-    wasmArray.set(data);
-
-    return {
-        dataPtr: dataPtr,
-        width: targetSize,
-        height: targetSize,
-        channels: 4, // RGBA
-    };
+    return imageData;
 }
 
 // Update CSS transform
@@ -2000,7 +1739,19 @@ function updateFPS() {
 }
 
 // Render string art lines to canvas
-function renderStringsToCanvas(canvas, lineSequence, pinCount, canvasSize, lineWidth) {
+function renderStringsToCanvas(
+    canvas,
+    lineSequence,
+    pinCount,
+    canvasSize,
+    lineWidth,
+) {
+    // Validate canvas size before rendering
+    if (canvasSize < 100 || !Number.isFinite(canvasSize)) {
+        console.warn(`Invalid canvas size: ${canvasSize}, skipping render`);
+        return;
+    }
+
     const ctx = canvas.getContext("2d");
 
     // Clear canvas
@@ -2010,15 +1761,33 @@ function renderStringsToCanvas(canvas, lineSequence, pinCount, canvasSize, lineW
     // Calculate pin coordinates
     const pinCoords = calculatePinCoordinates(pinCount, canvasSize);
 
-    // Use the provided line width directly
-    // Line width is a user parameter now, not based on canvas size
-
-    // Draw lines between pins
+    // Draw circle border
+    const centerOut = canvasSize / 2;
+    const radiusOut = canvasSize / 2 - 1;
     ctx.strokeStyle = "black";
-    ctx.lineWidth = lineWidth;
-    ctx.lineCap = "round";
-
+    ctx.lineWidth = 1;
     ctx.beginPath();
+    ctx.arc(centerOut, centerOut, radiusOut, 0, 2 * Math.PI);
+    ctx.stroke();
+
+    // Draw pins
+    ctx.fillStyle = "black";
+    for (let i = 0; i < pinCoords.length; i++) {
+        ctx.beginPath();
+        ctx.arc(pinCoords[i].x, pinCoords[i].y, 2, 0, 2 * Math.PI);
+        ctx.fill();
+    }
+
+    // Draw lines with alpha blending for smooth, natural string art effect
+    // Line width parameter controls opacity (higher = darker)
+    // This creates cumulative darkening where lines overlap
+    // Scale opacity based on canvas size to maintain consistent appearance
+    const baseAlpha = lineWidth / 100;  // Convert slider value (3-60) to base opacity (0.03-0.6)
+    const scaleFactor = canvasSize / 500;  // Scale relative to reference size (500px from webgpu)
+    const alpha = baseAlpha * scaleFactor;  // Increase opacity proportionally with canvas size
+    ctx.strokeStyle = `rgba(0, 0, 0, ${Math.min(alpha, 1.0)})`;  // Clamp to max 1.0
+    ctx.lineWidth = 1;
+
     for (let i = 0; i < lineSequence.length - 1; i++) {
         const fromPin = lineSequence[i];
         const toPin = lineSequence[i + 1];
@@ -2032,18 +1801,10 @@ function renderStringsToCanvas(canvas, lineSequence, pinCount, canvasSize, lineW
             continue; // Skip invalid pin indices
         }
 
+        ctx.beginPath();
         ctx.moveTo(pinCoords[fromPin].x, pinCoords[fromPin].y);
         ctx.lineTo(pinCoords[toPin].x, pinCoords[toPin].y);
-    }
-    ctx.stroke();
-
-    // Draw pins as small circles - scale with line width for consistency
-    const pinRadius = Math.max(1, lineWidth * 1.5);
-    ctx.fillStyle = "black";
-    for (let i = 0; i < pinCoords.length; i++) {
-        ctx.beginPath();
-        ctx.arc(pinCoords[i].x, pinCoords[i].y, pinRadius, 0, 2 * Math.PI);
-        ctx.fill();
+        ctx.stroke();
     }
 }
 
@@ -2058,27 +1819,27 @@ let webcamInitialCalibrationDone = false; // Track if we've done initial auto li
 
 // biome-ignore lint/correctness/noUnusedVariables: called from html
 function toggleInputMode() {
-    const modeToggle = document.getElementById('modeToggle');
-    const imageInputGroup = document.getElementById('imageInputGroup');
-    const webcamGroup = document.getElementById('webcamGroup');
+    const modeToggle = document.getElementById("modeToggle");
+    const imageInputGroup = document.getElementById("imageInputGroup");
+    const webcamGroup = document.getElementById("webcamGroup");
 
     // Update mode based on checkbox state
     webcamMode = modeToggle.checked;
 
     if (webcamMode) {
-        imageInputGroup.style.display = 'none';
-        webcamGroup.style.display = 'block';
+        imageInputGroup.style.display = "none";
+        webcamGroup.style.display = "block";
 
         // Update parameters for webcam mode
-        const targetSizeInput = document.getElementById('targetSize');
-        const targetSizeValue = document.getElementById('targetSizeValue');
-        const maxLinesInput = document.getElementById('maxLines');
-        const maxLinesValue = document.getElementById('maxLinesValue');
+        const targetSizeInput = document.getElementById("targetSize");
+        const targetSizeValue = document.getElementById("targetSizeValue");
+        const maxLinesInput = document.getElementById("maxLines");
+        const maxLinesValue = document.getElementById("maxLinesValue");
 
         targetSizeInput.value = 200;
         targetSizeValue.textContent = 200;
-        maxLinesInput.value = 2000;
-        maxLinesValue.textContent = 2000;
+        maxLinesInput.value = 4000;
+        maxLinesValue.textContent = 4000;
 
         // Reset calibration flag
         webcamInitialCalibrationDone = false;
@@ -2086,8 +1847,8 @@ function toggleInputMode() {
         // Automatically start webcam
         startWebcam();
     } else {
-        imageInputGroup.style.display = 'block';
-        webcamGroup.style.display = 'none';
+        imageInputGroup.style.display = "block";
+        webcamGroup.style.display = "none";
 
         // Stop webcam if running
         if (webcamStream) {
@@ -2106,9 +1867,9 @@ function toggleInputMode() {
 async function startWebcam() {
     try {
         // Ensure auto line weight checkbox is unchecked
-        const autoLineWeightCheckbox = document.getElementById('autoLineWeight');
-        const lineWeightSlider = document.getElementById('lineWeight');
-        const lineWeightValue = document.getElementById('lineWeightValue');
+        const autoLineWeightCheckbox = document.getElementById("autoLineWeight");
+        const lineWeightSlider = document.getElementById("lineWeight");
+        const lineWeightValue = document.getElementById("lineWeightValue");
 
         if (autoLineWeightCheckbox.checked) {
             autoLineWeightCheckbox.checked = false;
@@ -2118,59 +1879,58 @@ async function startWebcam() {
             lineWeightSlider.classList.add("opacity-100");
         }
 
-        const video = document.getElementById('webcamVideo');
-        const startBtn = document.getElementById('startWebcamBtn');
-        const stopBtn = document.getElementById('stopWebcamBtn');
+        const video = document.getElementById("webcamVideo");
+        const startBtn = document.getElementById("startWebcamBtn");
+        const stopBtn = document.getElementById("stopWebcamBtn");
 
-        showStatus('Starting webcam...', 'loading');
+        showStatus("Starting webcam...", "loading");
 
         webcamStream = await navigator.mediaDevices.getUserMedia({
             video: {
                 width: { ideal: 1280 },
-                height: { ideal: 720 }
-            }
+                height: { ideal: 720 },
+            },
         });
 
         video.srcObject = webcamStream;
 
         // Show canvas instead of video (canvas will display contrast-adjusted frames)
-        const canvas = document.getElementById('webcamCanvas');
-        canvas.style.display = 'block';
+        const canvas = document.getElementById("webcamCanvas");
+        canvas.style.display = "block";
 
-        startBtn.style.display = 'none';
-        stopBtn.style.display = 'block';
+        startBtn.style.display = "none";
+        stopBtn.style.display = "block";
 
-        showStatus('Webcam started!', 'success');
+        showStatus("Webcam started!", "success");
         setTimeout(() => hideStatus(), 2000);
 
         // Start processing loop
         startWebcamProcessing();
-
     } catch (error) {
-        showStatus(`Error starting webcam: ${error.message}`, 'error');
-        console.error('Webcam error:', error);
+        showStatus(`Error starting webcam: ${error.message}`, "error");
+        console.error("Webcam error:", error);
     }
 }
 
 // biome-ignore lint/correctness/noUnusedVariables: called from html
 function stopWebcam() {
-    const video = document.getElementById('webcamVideo');
-    const startBtn = document.getElementById('startWebcamBtn');
-    const stopBtn = document.getElementById('stopWebcamBtn');
-    const canvas = document.getElementById('webcamCanvas');
+    const video = document.getElementById("webcamVideo");
+    const startBtn = document.getElementById("startWebcamBtn");
+    const stopBtn = document.getElementById("stopWebcamBtn");
+    const canvas = document.getElementById("webcamCanvas");
 
     // Capture last frame before stopping
     if (video.videoWidth && video.videoHeight) {
-        const targetSize = parseInt(document.getElementById('targetSize').value);
+        const targetSize = parseInt(document.getElementById("targetSize").value);
         canvas.width = targetSize;
         canvas.height = targetSize;
 
-        const ctx = canvas.getContext('2d');
+        const ctx = canvas.getContext("2d");
         const size = Math.min(video.videoWidth, video.videoHeight);
         const sx = (video.videoWidth - size) / 2;
         const sy = (video.videoHeight - size) / 2;
 
-        ctx.fillStyle = 'white';
+        ctx.fillStyle = "white";
         ctx.fillRect(0, 0, targetSize, targetSize);
         ctx.drawImage(video, sx, sy, size, size, 0, 0, targetSize, targetSize);
 
@@ -2181,7 +1941,7 @@ function stopWebcam() {
             originalImage = img; // Set as original image for reprocessing
             hasInitialImage = true;
             displayImageWithZoom(img);
-            showStatus('Last webcam frame saved', 'success');
+            showStatus("Last webcam frame saved", "success");
             setTimeout(() => hideStatus(), 2000);
             // Clear the onload handler to allow GC
             img.onload = null;
@@ -2195,7 +1955,7 @@ function stopWebcam() {
     }
 
     if (webcamStream) {
-        webcamStream.getTracks().forEach(track => track.stop());
+        webcamStream.getTracks().forEach((track) => track.stop());
         webcamStream = null;
     }
 
@@ -2204,9 +1964,9 @@ function stopWebcam() {
         webcamProcessingLoop = null;
     }
 
-    canvas.style.display = 'none';
-    startBtn.style.display = 'block';
-    stopBtn.style.display = 'none';
+    canvas.style.display = "none";
+    startBtn.style.display = "block";
+    stopBtn.style.display = "none";
     webcamProcessing = false;
 }
 
@@ -2225,8 +1985,8 @@ function startWebcamProcessing() {
                 // Update FPS after entire frame processing (WASM + rendering)
                 updateFPS();
             } catch (error) {
-                console.error('Frame processing error:', error);
-                showStatus(`Processing error: ${error.message}`, 'error');
+                console.error("Frame processing error:", error);
+                showStatus(`Processing error: ${error.message}`, "error");
             } finally {
                 webcamProcessing = false;
             }
@@ -2240,8 +2000,8 @@ function startWebcamProcessing() {
 }
 
 async function processWebcamFrame() {
-    const video = document.getElementById('webcamVideo');
-    const canvas = document.getElementById('webcamCanvas');
+    const video = document.getElementById("webcamVideo");
+    const canvas = document.getElementById("webcamCanvas");
 
     if (!video.videoWidth || !video.videoHeight) {
         return; // Video not ready
@@ -2269,13 +2029,13 @@ async function processWebcamFrame() {
     }
 
     // Get target size
-    const targetSize = parseInt(document.getElementById('targetSize').value);
+    const targetSize = parseInt(document.getElementById("targetSize").value);
 
     // Set canvas to target size
     canvas.width = targetSize;
     canvas.height = targetSize;
 
-    const ctx = canvas.getContext('2d');
+    const ctx = canvas.getContext("2d");
 
     // Calculate crop to fit square
     const size = Math.min(video.videoWidth, video.videoHeight);
@@ -2283,7 +2043,7 @@ async function processWebcamFrame() {
     const sy = (video.videoHeight - size) / 2;
 
     // Draw cropped and scaled frame
-    ctx.fillStyle = 'white';
+    ctx.fillStyle = "white";
     ctx.fillRect(0, 0, targetSize, targetSize);
     ctx.drawImage(video, sx, sy, size, size, 0, 0, targetSize, targetSize);
 
@@ -2292,14 +2052,25 @@ async function processWebcamFrame() {
     const data = imageData.data;
 
     // Apply contrast adjustment
-    const contrastValue = parseInt(document.getElementById('webcamContrast').value);
+    const contrastValue = parseInt(
+        document.getElementById("webcamContrast").value,
+    );
     const contrastFactor = contrastValue / 100;
 
     for (let i = 0; i < data.length; i += 4) {
         // Apply contrast to R, G, B channels (skip alpha channel at i+3)
-        data[i] = Math.max(0, Math.min(255, ((data[i] - 128) * contrastFactor) + 128));       // R
-        data[i + 1] = Math.max(0, Math.min(255, ((data[i + 1] - 128) * contrastFactor) + 128)); // G
-        data[i + 2] = Math.max(0, Math.min(255, ((data[i + 2] - 128) * contrastFactor) + 128)); // B
+        data[i] = Math.max(
+            0,
+            Math.min(255, (data[i] - 128) * contrastFactor + 128),
+        ); // R
+        data[i + 1] = Math.max(
+            0,
+            Math.min(255, (data[i + 1] - 128) * contrastFactor + 128),
+        ); // G
+        data[i + 2] = Math.max(
+            0,
+            Math.min(255, (data[i + 2] - 128) * contrastFactor + 128),
+        ); // B
     }
 
     // Put adjusted image data back to canvas
@@ -2328,79 +2099,35 @@ async function processWebcamFrame() {
     const adjustedImageData = ctx.getImageData(0, 0, targetSize, targetSize);
     const adjustedData = adjustedImageData.data;
 
-    // Allocate WASM memory
-    if (!stringArtModule || !stringArtModule._malloc) {
-        return;
-    }
-
-    const dataPtr = stringArtModule._malloc(adjustedData.length);
-    if (dataPtr === 0) {
-        console.error('Failed to allocate WASM memory');
-        return;
-    }
-
-    // Copy data to WASM
-    let wasmArray;
-    if (stringArtModule.HEAPU8) {
-        wasmArray = new Uint8Array(
-            stringArtModule.HEAPU8.buffer,
-            dataPtr,
-            adjustedData.length,
-        );
-    } else {
-        const memory = stringArtModule.wasmMemory || stringArtModule.memory;
-        if (memory?.buffer) {
-            wasmArray = new Uint8Array(memory.buffer, dataPtr, adjustedData.length);
-        } else {
-            stringArtModule._free(dataPtr);
-            return;
-        }
-    }
-    wasmArray.set(adjustedData);
-
     // Get parameters
-    const pins = parseInt(document.getElementById('pins').value);
-    const maxLines = parseInt(document.getElementById('maxLines').value);
-    const lineWeight = parseInt(document.getElementById('lineWeight').value);
-    const minDistance = parseInt(document.getElementById('minDistance').value);
+    const pins = parseInt(document.getElementById("pins").value);
+    const maxLines = parseInt(document.getElementById("maxLines").value);
+    const lineWeight = parseInt(document.getElementById("lineWeight").value);
+    const minDistance = parseInt(document.getElementById("minDistance").value);
 
-    // Initialize if needed
-    const initResult = stringArtModule.ccall(
-        'initStringArt',
-        'number',
-        ['number', 'number', 'number', 'number', 'number', 'number'],
-        [pins, maxLines, targetSize, lineWeight, lineWeight, minDistance],
-    );
+    // Process frame with WebGPU
+    const config = {
+        imgSize: targetSize,
+        pins: pins,
+        minDistance: minDistance,
+        maxLines: maxLines,
+        lineWeight: lineWeight,
+        iterationsPerDispatch: 100,
+    };
 
-    if (initResult < 1) {
-        stringArtModule._free(dataPtr);
-        return;
-    }
-
-    // Process frame
-    stringArtModule.ccall(
-        'processImage',
-        'number',
-        ['number', 'number', 'number', 'number'],
-        [dataPtr, targetSize, targetSize, 4],
-    );
-
-    // Get result
-    const lineSequencePtr = stringArtModule.ccall('getLineSequence', 'number', [], []);
-    const totalLineCount = stringArtModule.ccall('getLineCount', 'number', [], []);
-
-    if (lineSequencePtr !== 0 && totalLineCount > 0) {
-        const lineSequence = new Int32Array(
-            stringArtModule.HEAPU8.buffer,
-            lineSequencePtr,
-            totalLineCount,
+    try {
+        const result = await WebGPUProcessor.processImage(
+            adjustedImageData,
+            config,
         );
-        currentLineSequence = Array.from(lineSequence);
-        currentPinCount = pins;
-        currentLineCount = totalLineCount;
-        updateOutputDisplay();
-    }
 
-    // Cleanup
-    stringArtModule._free(dataPtr);
+        if (result && result.lineCount > 0) {
+            currentLineSequence = result.lineSequence;
+            currentPinCount = pins;
+            currentLineCount = result.lineCount;
+            updateOutputDisplay();
+        }
+    } catch (error) {
+        console.error("WebGPU processing error:", error);
+    }
 }

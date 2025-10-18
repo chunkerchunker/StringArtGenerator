@@ -37,15 +37,18 @@
                 <div class="control-group" id="webcamGroup" style="display: none;">
                     <label>Webcam:</label>
                     <div style="display: flex; gap: 10px;">
-                        <button id="startWebcamBtn" onclick="startWebcam()" style="flex: 1; padding: 10px; border-radius: 4px; background: #2196F3; color: white; border: none; cursor: pointer;">
+                        <button id="startWebcamBtn" onclick="startWebcam()"
+                            style="flex: 1; padding: 10px; border-radius: 4px; background: #2196F3; color: white; border: none; cursor: pointer;">
                             Start Webcam
                         </button>
-                        <button id="stopWebcamBtn" onclick="stopWebcam()" style="flex: 1; padding: 10px; border-radius: 4px; background: #f44336; color: white; border: none; cursor: pointer; display: none;">
+                        <button id="stopWebcamBtn" onclick="stopWebcam()"
+                            style="flex: 1; padding: 10px; border-radius: 4px; background: #f44336; color: white; border: none; cursor: pointer; display: none;">
                             Stop Webcam
                         </button>
                     </div>
                     <video id="webcamVideo" autoplay playsinline style="display: none;"></video>
-                    <canvas id="webcamCanvas" style="width: 100%; border-radius: 4px; margin-top: 10px; display: none;"></canvas>
+                    <canvas id="webcamCanvas"
+                        style="width: 100%; border-radius: 4px; margin-top: 10px; display: none;"></canvas>
 
                     <div style="margin-top: 15px;">
                         <label for="webcamContrast">Contrast:</label>
@@ -81,8 +84,8 @@
                 <div class="control-group">
                     <label for="lineWeight">Line Weight:</label>
                     <div style="display: flex; align-items: center; gap: 10px;">
-                        <input type="range" id="lineWeight" min="1" max="200" value="20" style="flex: 1;">
-                        <div class="range-value" id="lineWeightValue" style="min-width: 40px;">20</div>
+                        <input type="range" id="lineWeight" min="1" max="200" value="8" style="flex: 1;">
+                        <div class="range-value" id="lineWeightValue" style="min-width: 40px;">8</div>
                         <label style="display: flex; align-items: center; gap: 5px; margin: 0;">
                             <input type="checkbox" id="autoLineWeight">
                             <span>Auto</span>
@@ -91,9 +94,9 @@
                 </div>
 
                 <div class="control-group">
-                    <label for="renderLineWidth">Render Line Width:</label>
-                    <input type="range" id="renderLineWidth" min="2" max="8" value="4" step="0.5">
-                    <div class="range-value" id="renderLineWidthValue">4</div>
+                    <label for="renderLineWidth">Line Opacity:</label>
+                    <input type="range" id="renderLineWidth" min="1" max="60" value="3" step="1">
+                    <div class="range-value" id="renderLineWidthValue">3</div>
                 </div>
 
             </div>
@@ -139,10 +142,7 @@
         </div>
     </div>
 
-    <script src="stringart.js"></script>
-
-    <!-- Load the WASM module -->
-    <script src="stringart.wasm.js"></script>
+    <script src="stringart.js" type="module"></script>
 </body>
 
 </html>
