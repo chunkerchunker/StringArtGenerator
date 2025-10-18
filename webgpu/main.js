@@ -10,8 +10,8 @@ const CONFIG = {
     OUTPUT_SIZE: 500,
     PINS: 300,
     MIN_DISTANCE: 30,
-    MAX_LINES: 2000,
-    LINE_WEIGHT: 14.0
+    MAX_LINES: 4000,
+    LINE_WEIGHT: 8.0
 };
 
 let gpuContext = null;
@@ -36,8 +36,22 @@ export async function initWebGPU() {
         throw new Error('Failed to get WebGPU adapter');
     }
 
-    const device = await adapter.requestDevice();
-    console.log('WebGPU device acquired');
+    // Check adapter limits
+    console.log('GPU limits:', {
+        maxComputeWorkgroupSizeX: adapter.limits.maxComputeWorkgroupSizeX,
+        maxComputeWorkgroupSizeY: adapter.limits.maxComputeWorkgroupSizeY,
+        maxComputeInvocationsPerWorkgroup: adapter.limits.maxComputeInvocationsPerWorkgroup
+    });
+
+    // Request device with higher workgroup limits
+    const device = await adapter.requestDevice({
+        requiredLimits: {
+            maxComputeWorkgroupSizeX: Math.min(1024, adapter.limits.maxComputeWorkgroupSizeX),
+            maxComputeWorkgroupSizeY: Math.min(1024, adapter.limits.maxComputeWorkgroupSizeY),
+            maxComputeInvocationsPerWorkgroup: Math.min(1024, adapter.limits.maxComputeInvocationsPerWorkgroup)
+        }
+    });
+    console.log('WebGPU device acquired with extended limits');
 
     // Load shader
     const shaderResponse = await fetch('shader.wgsl');
@@ -86,7 +100,7 @@ export async function initWebGPU() {
 
     const lineSequenceBuffer = device.createBuffer({
         size: (CONFIG.MAX_LINES + 1) * 4,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
         label: 'Line Sequence Buffer'
     });
 
