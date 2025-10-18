@@ -148,8 +148,16 @@ fn main(
         // Thread 0 computes the best pin and stores it
         if (tid == 0u && should_process) {
             let best_candidate_idx = sharedIndices[0];
-            bestPin = (currentPin + config.minDistance + best_candidate_idx) % config.pins;
-            lineSequence[iteration + 1u] = bestPin;
+            let best_error = sharedErrors[0];
+
+            // If best error is <= 0, no more valid lines exist - stop processing
+            if (best_error > 0.0) {
+                bestPin = (currentPin + config.minDistance + best_candidate_idx) % config.pins;
+                lineSequence[iteration + 1u] = bestPin;
+            } else {
+                // Mark that we should stop by setting iteration to maxLines
+                state.y = config.maxLines;
+            }
         }
         workgroupBarrier();
 
