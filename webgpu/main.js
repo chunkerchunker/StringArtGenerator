@@ -11,7 +11,8 @@ const CONFIG = {
     PINS: 300,
     MIN_DISTANCE: 30,
     MAX_LINES: 4000,
-    LINE_WEIGHT: 8.0
+    LINE_WEIGHT: 8.0,
+    ITERATIONS_PER_DISPATCH: 100  // Process N iterations per GPU dispatch (single dispatch = no overhead)
 };
 
 let gpuContext = null;
@@ -111,7 +112,7 @@ export async function initWebGPU() {
     });
 
     const configBuffer = device.createBuffer({
-        size: 32, // 5 u32 values with padding
+        size: 32, // 6 u32 values with padding
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         label: 'Config Buffer'
     });
@@ -141,8 +142,8 @@ export async function initWebGPU() {
         CONFIG.PINS,
         CONFIG.MIN_DISTANCE,
         CONFIG.MAX_LINES,
-        0, // padding
-        0, // padding
+        0, // lineWeight (will be set as f32 below)
+        CONFIG.ITERATIONS_PER_DISPATCH,
         0, // padding
         0  // padding
     ]);
@@ -202,9 +203,10 @@ export async function processFrame(videoElement, outputCanvas) {
         const initialState = new Uint32Array([0, 0]);
         device.queue.writeBuffer(buffers.stateBuffer, 0, initialState);
 
-        // 3. Submit all iterations as separate command buffers
-        // GPU queue guarantees ordering - each dispatch sees previous writes
-        for (let iter = 0; iter < CONFIG.MAX_LINES; iter++) {
+        // 3. Submit batched iterations (process multiple iterations per dispatch)
+        // Reduces CPU<->GPU overhead by batching iterations together
+        const numDispatches = Math.ceil(CONFIG.MAX_LINES / CONFIG.ITERATIONS_PER_DISPATCH);
+        for (let batch = 0; batch < numDispatches; batch++) {
             const commandEncoder = device.createCommandEncoder();
             const computePass = commandEncoder.beginComputePass();
             computePass.setPipeline(pipeline);

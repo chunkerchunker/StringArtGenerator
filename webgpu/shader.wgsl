@@ -15,6 +15,7 @@ struct Config {
     minDistance: u32,
     maxLines: u32,
     lineWeight: f32,
+    iterationsPerDispatch: u32,  // Number of iterations to process in one dispatch
 }
 @group(0) @binding(5) var<uniform> config: Config;
 
@@ -31,10 +32,17 @@ fn main(
     @builtin(local_invocation_id) lid: vec3<u32>
 ) {
     let tid = lid.x;
-    let currentPin = state.x;
-    let iteration = state.y;
 
-    // ==== PHASE 1: Evaluate Candidates ====
+    // Process multiple iterations per dispatch
+    for (var iter_offset = 0u; iter_offset < config.iterationsPerDispatch; iter_offset++) {
+        // All threads read state uniformly
+        let currentPin = state.x;
+        let iteration = state.y;
+
+        // All threads check the same condition uniformly
+        let should_process = iteration < config.maxLines;
+
+        // ==== PHASE 1: Evaluate Candidates ====
     // Process 32 candidates in parallel, each using 32 threads
     // tid 0-31: candidate 0, tid 32-63: candidate 1, etc.
 
@@ -51,7 +59,7 @@ fn main(
 
         var my_sum = 0.0;
 
-        if (candidate_idx < numCandidates) {
+        if (should_process && candidate_idx < numCandidates) {
             let test_pin = (currentPin + config.minDistance + candidate_idx) % config.pins;
 
             // Load line metadata
@@ -59,7 +67,7 @@ fn main(
             let offset = lineMetadata[line_idx].x;
             let length = lineMetadata[line_idx].y;
 
-            // Each of the 16 threads in this group sums a subset of pixels
+            // Each of the 32 threads in this group sums a subset of pixels
             for (var i = thread_in_group; i < length; i += THREADS_PER_CANDIDATE) {
                 let coord_idx = offset + i;
                 let x = lineCoordBuffer[coord_idx * 2u];
@@ -93,74 +101,82 @@ fn main(
         workgroupBarrier();
 
         // Thread 0 of each group stores the result
-        if (thread_in_group == 0u && candidate_idx < numCandidates) {
+        if (should_process && thread_in_group == 0u && candidate_idx < numCandidates) {
             let total_sum = partialSums[tid] + partialSums[tid + 1u];
             let test_pin = (currentPin + config.minDistance + candidate_idx) % config.pins;
             let line_idx = test_pin * config.pins + currentPin;
             let length = lineMetadata[line_idx].y;
             candidateErrors[candidate_idx] = total_sum / f32(length);
         }
-        // No barrier needed here - next iteration starts with a barrier at line 74
+        // No barrier needed here - next iteration starts with a barrier at line 82
     }
 
     // Initialize invalid candidates
-    if (tid < 270u && tid >= numCandidates) {
+    if (should_process && tid < 270u && tid >= numCandidates) {
         candidateErrors[tid] = -999999.0;
     }
-    // No barrier needed - Phase 2 has one at line 122 before reading candidateErrors
+    // No barrier needed - Phase 2 has one below before reading candidateErrors
 
-    // ==== PHASE 2: Find Best Candidate ====
+        // ==== PHASE 2: Find Best Candidate ====
 
-    // Load into shared memory for reduction
-    if (tid < 270u) {
-        sharedErrors[tid] = candidateErrors[tid];
-        sharedIndices[tid] = tid;
-    } else {
-        sharedErrors[tid] = -999999.0;
-        sharedIndices[tid] = 0u;
-    }
-    workgroupBarrier();
-
-    // Parallel reduction to find maximum (now using 512 threads)
-    for (var stride = 256u; stride > 0u; stride >>= 1u) {
-        if (tid < stride && tid < 512u) {
-            let other_idx = tid + stride;
-            if (other_idx < 512u && sharedErrors[other_idx] > sharedErrors[tid]) {
-                sharedErrors[tid] = sharedErrors[other_idx];
-                sharedIndices[tid] = sharedIndices[other_idx];
+        // Load into shared memory for reduction
+        if (tid < 270u) {
+            if (should_process) {
+                sharedErrors[tid] = candidateErrors[tid];
+            } else {
+                sharedErrors[tid] = -999999.0;
             }
+            sharedIndices[tid] = tid;
+        } else {
+            sharedErrors[tid] = -999999.0;
+            sharedIndices[tid] = 0u;
         }
         workgroupBarrier();
-    }
 
-    // Thread 0 computes the best pin and stores it
-    if (tid == 0u) {
-        let best_candidate_idx = sharedIndices[0];
-        bestPin = (currentPin + config.minDistance + best_candidate_idx) % config.pins;
-        lineSequence[iteration + 1u] = bestPin;
-    }
-    workgroupBarrier();
+        // Parallel reduction to find maximum (now using 512 threads)
+        for (var stride = 256u; stride > 0u; stride >>= 1u) {
+            if (tid < stride && tid < 512u) {
+                let other_idx = tid + stride;
+                if (other_idx < 512u && sharedErrors[other_idx] > sharedErrors[tid]) {
+                    sharedErrors[tid] = sharedErrors[other_idx];
+                    sharedIndices[tid] = sharedIndices[other_idx];
+                }
+            }
+            workgroupBarrier();
+        }
 
-    // ==== PHASE 3: Update Error Buffer ====
+        // Thread 0 computes the best pin and stores it
+        if (tid == 0u && should_process) {
+            let best_candidate_idx = sharedIndices[0];
+            bestPin = (currentPin + config.minDistance + best_candidate_idx) % config.pins;
+            lineSequence[iteration + 1u] = bestPin;
+        }
+        workgroupBarrier();
 
-    let selected_pin = bestPin;
-    let line_idx = selected_pin * config.pins + currentPin;
-    let offset = lineMetadata[line_idx].x;
-    let length = lineMetadata[line_idx].y;
+        // ==== PHASE 3: Update Error Buffer ====
 
-    // Parallel update: each thread handles subset of pixels (1024 threads now)
-    for (var i = tid; i < length; i += 1024u) {
-        let coord_idx = offset + i;
-        let x = lineCoordBuffer[coord_idx * 2u];
-        let y = lineCoordBuffer[coord_idx * 2u + 1u];
-        let pixel_idx = y * config.imgSize + x;
-        errorBuffer[pixel_idx] -= config.lineWeight;
-    }
+        let selected_pin = bestPin;
+        let line_idx = selected_pin * config.pins + currentPin;
+        let offset = lineMetadata[line_idx].x;
+        let length = lineMetadata[line_idx].y;
 
-    // Thread 0 updates state
-    workgroupBarrier();
-    if (tid == 0u) {
-        state.x = bestPin;  // Update current pin
-        state.y = iteration + 1u;  // Increment iteration
+        // Parallel update: each thread handles subset of pixels (1024 threads now)
+        if (should_process) {
+            for (var i = tid; i < length; i += 1024u) {
+                let coord_idx = offset + i;
+                let x = lineCoordBuffer[coord_idx * 2u];
+                let y = lineCoordBuffer[coord_idx * 2u + 1u];
+                let pixel_idx = y * config.imgSize + x;
+                errorBuffer[pixel_idx] -= config.lineWeight;
+            }
+        }
+
+        // Thread 0 updates state
+        workgroupBarrier();
+        if (tid == 0u && should_process) {
+            state.x = bestPin;  // Update current pin
+            state.y = iteration + 1u;  // Increment iteration
+        }
+        workgroupBarrier();  // Ensure state is updated before next iteration
     }
 }
