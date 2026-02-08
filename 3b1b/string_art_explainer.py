@@ -18,11 +18,26 @@ config.pixel_width = 1920
 config.pixel_height = 1080
 
 # ── Helpers ─────────────────────────────────────────────────────
+# Maximum safe width for content (frame is ~14.2 wide)
+MAX_WIDTH = 13.0
+
+def clamp_width(mob, max_width=MAX_WIDTH):
+    """Scale mobject down only if it exceeds max_width (preserves kerning)."""
+    if mob.width > max_width:
+        mob.scale(max_width / mob.width)
+    return mob
+
+def scaled_text(text, font_size, color=WHITE, **kwargs):
+    """Create text at 2x size and scale down for better kerning."""
+    return Text(text, font_size=font_size * 2, color=color, **kwargs).scale(0.5)
+
 def section_title(text, subtitle=None):
     """Create a styled section title group."""
-    title = Text(text, font_size=48, color=WHITE, weight=BOLD)
+    title = scaled_text(text, 48, color=WHITE, weight=BOLD)
+    clamp_width(title)
     if subtitle:
-        sub = Text(subtitle, font_size=24, color=SUBTLE)
+        sub = scaled_text(subtitle, 24, color=SUBTLE)
+        clamp_width(sub)
         grp = VGroup(title, sub).arrange(DOWN, buff=0.3)
         return grp
     return title
@@ -37,8 +52,8 @@ def pin_on_circle(center, radius, index, total_pins):
 # ═══════════════════════════════════════════════════════════════
 class Scene01_Title(Scene):
     def construct(self):
-        title = Text("String Art Algorithm", font_size=64, color=WHITE, weight=BOLD)
-        subtitle = Text("How a computer turns a photo into thread art", font_size=28, color=ACCENT2)
+        title = scaled_text("String Art Algorithm", 64, color=WHITE, weight=BOLD)
+        subtitle = scaled_text("How a computer turns a photo into thread art", 28, color=ACCENT2)
         VGroup(title, subtitle).arrange(DOWN, buff=0.4).move_to(ORIGIN)
 
         # decorative pins & thread
@@ -77,14 +92,14 @@ class Scene02_Concept(Scene):
         header.to_edge(UP, buff=0.5)
         self.play(Write(header), run_time=0.8)
 
-        # Left: description
+        # Left: description (keep left of center to avoid circle)
         steps = VGroup(
-            Text("1. Place pins around a circular frame", font_size=22, color=WHITE),
-            Text("2. Stretch a single dark thread between pins", font_size=22, color=WHITE),
-            Text("3. Where thread overlaps → darker regions", font_size=22, color=WHITE),
-            Text("4. The algorithm chooses which pins to", font_size=22, color=WHITE),
-            Text("   connect to reproduce a photograph", font_size=22, color=WHITE),
-        ).arrange(DOWN, aligned_edge=LEFT, buff=0.25).shift(LEFT * 3.2 + DOWN * 0.3)
+            scaled_text("1. Place pins around a circular frame", 22),
+            scaled_text("2. Stretch dark thread between pins", 22),
+            scaled_text("3. Thread overlaps → darker regions", 22),
+            scaled_text("4. Algorithm chooses which pins to", 22),
+            scaled_text("   connect to reproduce a photo", 22),
+        ).arrange(DOWN, aligned_edge=LEFT, buff=0.25).shift(LEFT * 3.5 + DOWN * 0.3)
 
         # Right: build up a small string art demo
         center = RIGHT * 2.5 + DOWN * 0.3
@@ -134,40 +149,40 @@ class Scene03_ImagePrep(Scene):
         header.to_edge(UP, buff=0.5)
         self.play(Write(header), run_time=0.8)
 
-        # Load real image
-        img_mob = ImageMobject("mona_lisa.png").scale_to_fit_height(3.5)
-        img_mob.shift(LEFT * 4 + DOWN * 0.4)
-        label1 = Text("Original", font_size=20, color=SUBTLE).next_to(img_mob, DOWN, buff=0.2)
+        # Load real image (compact layout to fit screen)
+        img_mob = ImageMobject("mona_lisa.png").scale_to_fit_height(2.8)
+        img_mob.shift(LEFT * 5.2 + DOWN * 0.4)
+        label1 = scaled_text("Original", 20, color=SUBTLE).next_to(img_mob, DOWN, buff=0.2)
         self.play(FadeIn(img_mob), FadeIn(label1), run_time=0.8)
         self.wait(0.5)
 
         # Arrow
-        arrow1 = Arrow(LEFT * 2 + DOWN * 0.4, LEFT * 0.5 + DOWN * 0.4, color=ACCENT, stroke_width=3)
-        step1_text = Text("Crop to square\n& resize to N×N", font_size=18, color=ACCENT2).next_to(arrow1, UP, buff=0.15)
+        arrow1 = Arrow(LEFT * 3.5 + DOWN * 0.4, LEFT * 2.3 + DOWN * 0.4, color=ACCENT, stroke_width=3)
+        step1_text = scaled_text("Crop & resize", 18, color=ACCENT2).next_to(arrow1, UP, buff=0.15)
         self.play(GrowArrow(arrow1), FadeIn(step1_text), run_time=0.6)
 
         # Squared image with frame
-        img_sq = ImageMobject("mona_lisa.png").scale_to_fit_height(3.0)
-        img_sq.scale_to_fit_width(3.0)
-        img_sq.move_to(RIGHT * 0.8 + DOWN * 0.4)
-        sq_frame = Square(side_length=3.0, color=ACCENT, stroke_width=2).move_to(img_sq)
-        label_sq = Text("500 × 500", font_size=20, color=SUBTLE).next_to(img_sq, DOWN, buff=0.2)
+        img_sq = ImageMobject("mona_lisa.png").scale_to_fit_height(2.6)
+        img_sq.scale_to_fit_width(2.6)
+        img_sq.move_to(LEFT * 0.8 + DOWN * 0.4)
+        sq_frame = Square(side_length=2.6, color=ACCENT, stroke_width=2).move_to(img_sq)
+        label_sq = scaled_text("500 × 500", 20, color=SUBTLE).next_to(img_sq, DOWN, buff=0.2)
         self.play(FadeIn(img_sq), Create(sq_frame), FadeIn(label_sq), run_time=0.8)
         self.wait(0.5)
 
         # Arrow to grayscale
-        arrow2 = Arrow(RIGHT * 2.6 + DOWN * 0.4, RIGHT * 4.1 + DOWN * 0.4, color=ACCENT, stroke_width=3)
-        step2_text = Text("Convert to\ngrayscale", font_size=18, color=ACCENT2).next_to(arrow2, UP, buff=0.15)
+        arrow2 = Arrow(RIGHT * 0.8 + DOWN * 0.4, RIGHT * 2.0 + DOWN * 0.4, color=ACCENT, stroke_width=3)
+        step2_text = scaled_text("Grayscale", 18, color=ACCENT2).next_to(arrow2, UP, buff=0.15)
         self.play(GrowArrow(arrow2), FadeIn(step2_text), run_time=0.6)
 
         # Grayscale representation (use a gradient square)
-        gray_sq = Square(side_length=2.8, fill_opacity=1, fill_color=GREY_D, stroke_color=ACCENT, stroke_width=2)
-        gray_sq.move_to(RIGHT * 5.3 + DOWN * 0.4)
-        gray_label = Text("Luminosity\narray", font_size=18, color=SUBTLE).next_to(gray_sq, DOWN, buff=0.2)
+        gray_sq = Square(side_length=2.6, fill_opacity=1, fill_color=GREY_D, stroke_color=ACCENT, stroke_width=2)
+        gray_sq.move_to(RIGHT * 4.0 + DOWN * 0.4)
+        gray_label = scaled_text("Luminosity", 18, color=SUBTLE).next_to(gray_sq, DOWN, buff=0.2)
 
         # Create pixel grid overlay
         grid = VGroup()
-        gs = 2.8
+        gs = 2.6
         n = 8
         cs = gs / n
         for i in range(n):
@@ -224,27 +239,27 @@ class Scene04_ErrorImage(Scene):
             return grp
 
         lum_grid = make_grid(lum_vals, LEFT * 3.5 + DOWN * 0.3)
-        lum_label = Text("Luminosity", font_size=20, color=SUBTLE).next_to(lum_grid, DOWN, buff=0.2)
+        lum_label = scaled_text("Luminosity", 20, color=SUBTLE).next_to(lum_grid, DOWN, buff=0.2)
         self.play(FadeIn(lum_grid), FadeIn(lum_label), run_time=0.6)
 
-        # Formula
+        # Formula and arrow in center
         formula = MathTex(r"\text{error}[i] = 255 - \text{luminosity}[i]", font_size=30, color=ACCENT3)
-        formula.move_to(DOWN * 0.3)
-        arrow = Arrow(LEFT * 1.7 + DOWN * 0.3, LEFT * 0.3 + DOWN * 0.3, color=ACCENT)
+        formula.move_to(DOWN * 0.1)
+
+        # Single arrow in the middle
+        arrow = Arrow(LEFT * 0.6 + DOWN * 0.55, RIGHT * 0.6 + DOWN * 0.55, color=ACCENT, stroke_width=5)
         self.play(GrowArrow(arrow), Write(formula), run_time=0.8)
 
         # Error grid (inverted)
         error_vals = 1.0 - lum_vals
         error_grid = make_grid(error_vals, RIGHT * 3.5 + DOWN * 0.3)
-        error_label = Text("Error (inverted)", font_size=20, color=SUBTLE).next_to(error_grid, DOWN, buff=0.2)
-        arrow2 = Arrow(RIGHT * 1.3 + DOWN * 0.3, RIGHT * 1.8 + DOWN * 0.3, color=ACCENT)
-        self.play(GrowArrow(arrow2), FadeIn(error_grid), FadeIn(error_label), run_time=0.8)
+        error_label = scaled_text("Error (inverted)", 20, color=SUBTLE).next_to(error_grid, DOWN, buff=0.2)
+        self.play(FadeIn(error_grid), FadeIn(error_label), run_time=0.8)
 
         # Explanation
-        note = Text(
-            "High error = dark in original = needs thread coverage",
-            font_size=22, color=ACCENT2
-        ).to_edge(DOWN, buff=0.5)
+        note = scaled_text("High error = dark in original = needs thread coverage", 22, color=ACCENT2)
+        clamp_width(note)
+        note.to_edge(DOWN, buff=0.5)
         self.play(FadeIn(note, shift=UP * 0.2), run_time=0.6)
         self.wait(1.8)
         self.play(FadeOut(Group(*self.mobjects)), run_time=0.8)
@@ -280,7 +295,7 @@ class Scene05_Pins(Scene):
             pins.add(dot)
             # Label a few pins
             if i % 12 == 0:
-                lbl = Text(str(i), font_size=14, color=ACCENT).move_to(
+                lbl = scaled_text(str(i), 14, color=ACCENT).move_to(
                     pin_on_circle(center, radius + 0.35, i, total_pins)
                 )
                 labels.add(lbl)
@@ -294,7 +309,7 @@ class Scene05_Pins(Scene):
         self.play(Write(formula), run_time=1.0)
 
         # Label
-        n_label = Text(f"N = {total_pins} pins equally spaced", font_size=22, color=ACCENT2)
+        n_label = scaled_text(f"N = {total_pins} pins equally spaced", 22, color=ACCENT2)
         n_label.to_edge(DOWN, buff=0.5)
         self.play(FadeIn(n_label), run_time=0.5)
         self.wait(1.5)
@@ -340,22 +355,29 @@ class Scene06_Precalculate(Scene):
 
         self.play(LaggedStart(*[FadeIn(d, scale=2) for d in sample_dots], lag_ratio=0.05), run_time=1.0)
 
-        # Labels
-        lbl_a = Text(f"Pin {pin_a}", font_size=16, color=ACCENT).next_to(Dot(pa), LEFT, buff=0.15)
-        lbl_b = Text(f"Pin {pin_b}", font_size=16, color=ACCENT).next_to(Dot(pb), RIGHT, buff=0.15)
+        # Labels (render larger, scale down to preserve kerning)
+        lbl_a = Text(f"Pin {pin_a}", font_size=32, color=ACCENT).scale(0.5).next_to(Dot(pa), LEFT, buff=0.15)
+        lbl_b = Text(f"Pin {pin_b}", font_size=32, color=ACCENT).scale(0.5).next_to(Dot(pb), RIGHT, buff=0.15)
         self.play(FadeIn(lbl_a), FadeIn(lbl_b), run_time=0.3)
 
-        # Right side: explanation
-        explanation = VGroup(
-            Text("For every valid pin pair:", font_size=22, color=WHITE),
-            Text("", font_size=10),
-            Text("1. Compute distance d between pins", font_size=19, color=ACCENT2),
-            Text("2. Sample d pixels along the line", font_size=19, color=ACCENT2),
-            Text("3. Store pixel (x, y) coords in cache", font_size=19, color=ACCENT2),
-            Text("", font_size=10),
-            Text("Skip pairs closer than MIN_DISTANCE", font_size=19, color=ACCENT),
-            Text("(short arcs don't help visually)", font_size=17, color=SUBTLE),
-        ).arrange(DOWN, aligned_edge=LEFT, buff=0.15).shift(RIGHT * 2.8 + DOWN * 0.2)
+        # Right side: explanation with indentation
+        exp_lines = [
+            (0, "For every valid pin pair:", 44, WHITE),
+            (1, "1. Compute distance d", 38, ACCENT2),
+            (1, "2. Sample d pixels along line", 38, ACCENT2),
+            (1, "3. Store (x,y) coords in cache", 38, ACCENT2),
+            (0, "Skip pairs closer than MIN_DIST", 38, ACCENT),
+            (1, "(short arcs don't help)", 34, SUBTLE),
+        ]
+        INDENT_WIDTH = 0.25
+        explanation = VGroup()
+        for indent, txt, size, clr in exp_lines:
+            t = Text(txt, font_size=size, color=clr).scale(0.5)
+            explanation.add(t)
+        explanation.arrange(DOWN, aligned_edge=LEFT, buff=0.22)
+        for i, (indent, _, _, _) in enumerate(exp_lines):
+            explanation[i].shift(RIGHT * indent * INDENT_WIDTH)
+        explanation.shift(RIGHT * 3.0 + DOWN * 0.2)
 
         self.play(FadeIn(explanation), run_time=0.8)
 
@@ -378,54 +400,53 @@ class Scene07_GreedyAlgo(Scene):
         header.to_edge(UP, buff=0.4)
         self.play(Write(header), run_time=0.8)
 
-        # Pseudocode
+        # Pseudocode with indentation (indent level, text, color)
         code_lines = [
-            ("current_pin = 0", WHITE),
-            ("recent_pins = []  # sliding window of 20", SUBTLE),
-            ("", WHITE),
-            ("for each iteration (up to MAX_LINES):", WHITE),
-            ("    best_pin = None", WHITE),
-            ("    best_score = 0", WHITE),
-            ("", WHITE),
-            ("    for each candidate pin:", ACCENT2),
-            ("        skip if too close on circle", SUBTLE),
-            ("        skip if in recent_pins", SUBTLE),
-            ("", WHITE),
-            ("        pixels = cache[current, candidate]", ACCENT2),
-            ("        score = mean(error[px] for px in pixels)", ACCENT3),
-            ("", WHITE),
-            ("        if score > best_score:", ACCENT2),
-            ("            best_score = score", ACCENT2),
-            ("            best_pin = candidate", ACCENT2),
-            ("", WHITE),
-            ("    # Commit the best line:", ACCENT),
-            ("    for px in cache[current, best_pin]:", ACCENT),
-            ("        error[px] -= LINE_WEIGHT", ACCENT),
-            ("    current_pin = best_pin", WHITE),
+            (0, "current_pin = 0", WHITE),
+            (0, "recent_pins = []", SUBTLE),
+            (0, "for iteration in range(MAX_LINES):", WHITE),
+            (1, "best_pin, best_score = None, 0", WHITE),
+            (1, "for candidate in all_pins:", ACCENT2),
+            (2, "if too_close(candidate): continue", SUBTLE),
+            (2, "if candidate in recent: continue", SUBTLE),
+            (2, "pixels = cache[current, candidate]", ACCENT2),
+            (2, "score = mean(error[p] for p in pixels)", ACCENT3),  # line 8
+            (2, "if score > best_score:", ACCENT2),
+            (3, "best_score = score", ACCENT2),
+            (3, "best_pin = candidate", ACCENT2),
+            (1, "# Commit the best line", ACCENT),
+            (1, "for px in cache[current, best_pin]:", ACCENT),
+            (2, "error[px] -= LINE_WEIGHT", ACCENT),  # line 14
+            (1, "current_pin = best_pin", WHITE),
         ]
 
+        INDENT_WIDTH = 0.3  # spacing per indent level
         code_vg = VGroup()
-        for txt, clr in code_lines:
-            t = Text(txt, font_size=16, color=clr, font="Menlo")
+        for indent, txt, clr in code_lines:
+            t = Text(txt, font_size=32, color=clr, font="Menlo").scale(0.5)
+            t.shift(RIGHT * indent * INDENT_WIDTH)
             code_vg.add(t)
-        code_vg.arrange(DOWN, aligned_edge=LEFT, buff=0.06)
-        code_vg.shift(DOWN * 0.5)
+        code_vg.arrange(DOWN, aligned_edge=LEFT, buff=0.14)
+        # Re-apply indentation after arrange (which resets positions)
+        for i, (indent, _, _) in enumerate(code_lines):
+            code_vg[i].shift(RIGHT * indent * INDENT_WIDTH)
+        code_vg.move_to(ORIGIN + DOWN * 0.3).to_edge(LEFT, buff=0.5)
 
         # Highlight boxes for key parts
         self.play(FadeIn(code_vg), run_time=1.0)
         self.wait(0.5)
 
-        # Highlight scoring line
-        highlight = SurroundingRectangle(code_vg[12], color=ACCENT3, buff=0.05, stroke_width=2)
-        note1 = Text("← Pick the line crossing the most remaining darkness",
-                      font_size=16, color=ACCENT3).next_to(highlight, RIGHT, buff=0.3)
+        # Highlight scoring line (index 8)
+        highlight = SurroundingRectangle(code_vg[8], color=ACCENT3, buff=0.05, stroke_width=2)
+        note1 = Text("← Best = most darkness", font_size=32, color=ACCENT3).scale(0.5)
+        note1.move_to(RIGHT * 4.5 + code_vg[8].get_center()[1] * UP)
         self.play(Create(highlight), FadeIn(note1), run_time=0.6)
         self.wait(1.0)
 
-        # Highlight subtraction
-        highlight2 = SurroundingRectangle(code_vg[20], color=ACCENT, buff=0.05, stroke_width=2)
-        note2 = Text("← Reduce error so thread isn't wasted on same area",
-                      font_size=16, color=ACCENT).next_to(highlight2, RIGHT, buff=0.3)
+        # Highlight subtraction (index 14)
+        highlight2 = SurroundingRectangle(code_vg[14], color=ACCENT, buff=0.05, stroke_width=2)
+        note2 = Text("← Prevent redundant coverage", font_size=32, color=ACCENT).scale(0.5)
+        note2.move_to(RIGHT * 4.5 + code_vg[14].get_center()[1] * UP)
         self.play(ReplacementTransform(highlight, highlight2), ReplacementTransform(note1, note2), run_time=0.6)
         self.wait(1.8)
         self.play(FadeOut(Group(*self.mobjects)), run_time=0.8)
@@ -486,9 +507,9 @@ class Scene08_GreedyDemo(Scene):
 
         # Info panel
         info_panel = VGroup(
-            Text("Current pin: 0", font_size=20, color=WHITE),
-            Text("Lines drawn: 0", font_size=20, color=WHITE),
-            Text("Best candidate: —", font_size=20, color=ACCENT2),
+            scaled_text("Current pin: 0", 20),
+            scaled_text("Lines drawn: 0", 20),
+            scaled_text("Best candidate: —", 20, color=ACCENT2),
         ).arrange(DOWN, aligned_edge=LEFT, buff=0.2).to_edge(RIGHT, buff=0.8).shift(DOWN * 0.3)
         self.play(FadeIn(info_panel), run_time=0.3)
 
@@ -520,9 +541,9 @@ class Scene08_GreedyDemo(Scene):
 
             # Update info
             new_info = VGroup(
-                Text(f"Current pin: {to_pin}", font_size=20, color=WHITE),
-                Text(f"Lines drawn: {step + 1}", font_size=20, color=WHITE),
-                Text(f"Best candidate: pin {to_pin}", font_size=20, color=ACCENT2),
+                scaled_text(f"Current pin: {to_pin}", 20),
+                scaled_text(f"Lines drawn: {step + 1}", 20),
+                scaled_text(f"Best candidate: pin {to_pin}", 20, color=ACCENT2),
             ).arrange(DOWN, aligned_edge=LEFT, buff=0.2).to_edge(RIGHT, buff=0.8).shift(DOWN * 0.3)
 
             self.play(
@@ -575,7 +596,7 @@ class Scene09_ErrorSubtraction(Scene):
         pos_after = RIGHT * 3.5 + DOWN * 0.5
 
         grid_before = make_grid(error_vals, pos_before)
-        lbl_before = Text("Error before line", font_size=18, color=SUBTLE).next_to(grid_before, DOWN, buff=0.2)
+        lbl_before = scaled_text("Error before line", 18, color=SUBTLE).next_to(grid_before, DOWN, buff=0.2)
         self.play(FadeIn(grid_before), FadeIn(lbl_before), run_time=0.6)
 
         # Show the line path on the grid
@@ -584,7 +605,7 @@ class Scene09_ErrorSubtraction(Scene):
             pos_before + RIGHT * gs / 2 + DOWN * gs / 2,
             color=ACCENT3, stroke_width=3
         )
-        lbl_line = Text("Thread path", font_size=16, color=ACCENT3).next_to(line_path, UP, buff=0.15)
+        lbl_line = scaled_text("Thread path", 16, color=ACCENT3).next_to(line_path, UP, buff=0.15)
         self.play(Create(line_path), FadeIn(lbl_line), run_time=0.6)
 
         # Arrow
@@ -600,13 +621,15 @@ class Scene09_ErrorSubtraction(Scene):
                 error_after[i][j] = max(0, error_after[i][j] - 0.5)
 
         grid_after = make_grid(error_after, pos_after)
-        lbl_after = Text("Error after line", font_size=18, color=SUBTLE).next_to(grid_after, DOWN, buff=0.2)
+        lbl_after = scaled_text("Error after line", 18, color=SUBTLE).next_to(grid_after, DOWN, buff=0.2)
         self.play(FadeIn(grid_after), FadeIn(lbl_after), run_time=0.6)
 
-        note = Text(
-            "Darkness along the thread is \"used up\" — future lines target remaining dark areas",
-            font_size=20, color=ACCENT2
-        ).to_edge(DOWN, buff=0.4)
+        note = scaled_text(
+            "Darkness along thread is \"used up\" — future lines target remaining areas",
+            20, color=ACCENT2
+        )
+        clamp_width(note)
+        note.to_edge(DOWN, buff=0.4)
         self.play(FadeIn(note, shift=UP * 0.2), run_time=0.6)
         self.wait(1.8)
         self.play(FadeOut(Group(*self.mobjects)), run_time=0.8)
@@ -668,7 +691,7 @@ class Scene10_Output(Scene):
             all_lines.add(line)
 
         # Phase 1: slow (first 20)
-        counter = Text("Lines: 0", font_size=22, color=ACCENT2).to_edge(DOWN, buff=0.5)
+        counter = scaled_text("Lines: 0", 22, color=ACCENT2).to_edge(DOWN, buff=0.5)
         self.play(FadeIn(counter), run_time=0.2)
 
         batch1 = all_lines[:20]
@@ -676,7 +699,7 @@ class Scene10_Output(Scene):
             LaggedStart(*[Create(l) for l in batch1], lag_ratio=0.06),
             run_time=2.0
         )
-        c1 = Text("Lines: 20", font_size=22, color=ACCENT2).to_edge(DOWN, buff=0.5)
+        c1 = scaled_text("Lines: 20", 22, color=ACCENT2).to_edge(DOWN, buff=0.5)
         self.play(ReplacementTransform(counter, c1), run_time=0.2)
 
         # Phase 2: medium (next 80)
@@ -685,7 +708,7 @@ class Scene10_Output(Scene):
             LaggedStart(*[Create(l) for l in batch2], lag_ratio=0.01),
             run_time=2.0
         )
-        c2 = Text("Lines: 100", font_size=22, color=ACCENT2).to_edge(DOWN, buff=0.5)
+        c2 = scaled_text("Lines: 100", 22, color=ACCENT2).to_edge(DOWN, buff=0.5)
         self.play(ReplacementTransform(c1, c2), run_time=0.2)
 
         # Phase 3: fast (rest)
@@ -694,11 +717,12 @@ class Scene10_Output(Scene):
             LaggedStart(*[Create(l) for l in batch3], lag_ratio=0.002),
             run_time=2.0
         )
-        c3 = Text(f"Lines: {len(sequence) - 1}", font_size=22, color=ACCENT2).to_edge(DOWN, buff=0.5)
+        c3 = scaled_text(f"Lines: {len(sequence) - 1}", 22, color=ACCENT2).to_edge(DOWN, buff=0.5)
         self.play(ReplacementTransform(c2, c3), run_time=0.2)
 
-        note = Text("Overlapping semi-transparent lines accumulate → darker regions",
-                     font_size=20, color=ACCENT).next_to(c3, UP, buff=0.3)
+        note = scaled_text("Overlapping semi-transparent lines → darker regions", 20, color=ACCENT)
+        clamp_width(note)
+        note.next_to(c3, UP, buff=0.3)
         self.play(FadeIn(note), run_time=0.5)
         self.wait(1.5)
         self.play(FadeOut(Group(*self.mobjects)), run_time=0.8)
@@ -715,34 +739,35 @@ class Scene11_Summary(Scene):
 
         steps = VGroup(
             VGroup(
-                Text("①", font_size=28, color=ACCENT),
-                Text("Load image → grayscale → error map (invert)", font_size=22, color=WHITE)
+                scaled_text("①", 28, color=ACCENT),
+                scaled_text("Load image → grayscale → error map (invert)", 22)
             ).arrange(RIGHT, buff=0.3),
             VGroup(
-                Text("②", font_size=28, color=ACCENT),
-                Text("Place N pins equally around a circle", font_size=22, color=WHITE)
+                scaled_text("②", 28, color=ACCENT),
+                scaled_text("Place N pins equally around a circle", 22)
             ).arrange(RIGHT, buff=0.3),
             VGroup(
-                Text("③", font_size=28, color=ACCENT),
-                Text("Cache pixel coordinates for every valid pin pair", font_size=22, color=WHITE)
+                scaled_text("③", 28, color=ACCENT),
+                scaled_text("Cache pixel coords for every valid pin pair", 22)
             ).arrange(RIGHT, buff=0.3),
             VGroup(
-                Text("④", font_size=28, color=ACCENT),
-                Text("Greedily select the line with highest average error", font_size=22, color=WHITE)
+                scaled_text("④", 28, color=ACCENT),
+                scaled_text("Greedily select line with highest average error", 22)
             ).arrange(RIGHT, buff=0.3),
             VGroup(
-                Text("⑤", font_size=28, color=ACCENT),
-                Text("Subtract weight along that line's pixels", font_size=22, color=WHITE)
+                scaled_text("⑤", 28, color=ACCENT),
+                scaled_text("Subtract weight along that line's pixels", 22)
             ).arrange(RIGHT, buff=0.3),
             VGroup(
-                Text("⑥", font_size=28, color=ACCENT),
-                Text("Repeat ④–⑤ for thousands of lines", font_size=22, color=WHITE)
+                scaled_text("⑥", 28, color=ACCENT),
+                scaled_text("Repeat ④–⑤ for thousands of lines", 22)
             ).arrange(RIGHT, buff=0.3),
             VGroup(
-                Text("⑦", font_size=28, color=ACCENT),
-                Text("Render: draw all lines with alpha blending", font_size=22, color=WHITE)
+                scaled_text("⑦", 28, color=ACCENT),
+                scaled_text("Render: draw all lines with alpha blending", 22)
             ).arrange(RIGHT, buff=0.3),
         ).arrange(DOWN, aligned_edge=LEFT, buff=0.3).move_to(ORIGIN + DOWN * 0.2)
+        clamp_width(steps, max_width=12.5)
 
         for step in steps:
             self.play(FadeIn(step, shift=RIGHT * 0.3), run_time=0.4)
@@ -750,10 +775,11 @@ class Scene11_Summary(Scene):
 
         # Key insight box
         box_text = Text(
-            "Key insight: each line greedily covers the most remaining darkness,\n"
-            "and subtracting error prevents redundant coverage.",
-            font_size=20, color=ACCENT3, line_spacing=1.3
-        )
+            "Key insight: each line covers the most remaining darkness,\n"
+            "subtracting error prevents redundant coverage.",
+            font_size=40, color=ACCENT3, line_spacing=1.3
+        ).scale(0.5)
+        clamp_width(box_text, max_width=12.0)
         box = SurroundingRectangle(box_text, color=ACCENT3, buff=0.2, stroke_width=1.5, corner_radius=0.1)
         insight = VGroup(box, box_text).to_edge(DOWN, buff=0.4)
         self.play(FadeIn(insight), run_time=0.8)
@@ -761,8 +787,8 @@ class Scene11_Summary(Scene):
         self.play(FadeOut(Group(*self.mobjects)), run_time=0.8)
 
         # Final title
-        final = Text("String Art Algorithm", font_size=48, color=WHITE, weight=BOLD)
-        final2 = Text("A single thread, thousands of lines, one image.", font_size=24, color=ACCENT2)
+        final = scaled_text("String Art Algorithm", 48, color=WHITE, weight=BOLD)
+        final2 = scaled_text("A single thread, thousands of lines, one image.", 24, color=ACCENT2)
         VGroup(final, final2).arrange(DOWN, buff=0.3)
         self.play(Write(final), run_time=0.8)
         self.play(FadeIn(final2, shift=UP * 0.2), run_time=0.6)
