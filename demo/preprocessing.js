@@ -1,31 +1,6 @@
 // Webcam frame preprocessing - capture and convert to luminosity
 // Matches algorithm from main.go:107-178
 
-export function captureVideoFrame(videoElement, targetSize) {
-    // Create temporary canvas for frame capture
-    const canvas = document.createElement('canvas');
-    const ctx = canvas.getContext('2d', { willReadFrequently: true });
-
-    const videoWidth = videoElement.videoWidth;
-    const videoHeight = videoElement.videoHeight;
-
-    // Crop to center square (main.go:135-142)
-    const size = Math.min(videoWidth, videoHeight);
-    const startX = (videoWidth - size) / 2;
-    const startY = (videoHeight - size) / 2;
-
-    // Resize to target size (main.go:144-148)
-    canvas.width = targetSize;
-    canvas.height = targetSize;
-    ctx.drawImage(
-        videoElement,
-        startX, startY, size, size,  // Source rect (center square)
-        0, 0, targetSize, targetSize  // Dest rect (resized)
-    );
-
-    return ctx.getImageData(0, 0, targetSize, targetSize);
-}
-
 export function convertToLuminosity(imageData) {
     // main.go:167-178 - ITU-R BT.709 luminosity formula
     const pixels = imageData.data;

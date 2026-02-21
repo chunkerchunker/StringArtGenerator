@@ -1,7 +1,6 @@
 import * as WebGPUProcessor from "./webgpu-processor.js";
 
 let isProcessing = false;
-const runCount = 0;
 let isAutoCancelled = false;
 
 // Global storage for generated string art data
@@ -1671,8 +1670,8 @@ function downloadPinList() {
 
     const outname = `${baseName}-pins.txt`;
 
-    // Create text content with one pin number per line
-    const pinListContent = currentLineSequence.join("\n");
+    // Create text content with header and one pin number per line
+    const pinListContent = `# ${currentPinCount} pins\n${currentLineSequence.join("\n")}`;
 
     // Create and download the text file
     const blob = new Blob([pinListContent], { type: "text/plain" });
