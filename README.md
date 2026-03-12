@@ -126,24 +126,3 @@ time ./stringart -input image.jpg -pins 400 -lines 10000        # Go baseline
 time ./stringart-c -input image.jpg -pins 400 -lines 10000      # Basic C optimization
 time ./stringart-fast -input image.jpg -pins 400 -lines 10000   # Best performance
 ```
-
-## Build Requirements
-
-- C compiler (clang or gcc)
-- Make
-- Internet connection (for downloading STB headers)
-
-## Testing
-
-```bash
-# Test with sample parameters
-make test-c
-```
-
-This will process a test image with high-quality settings and open the result.
-
-## Web Version
-
-For a web-based interface, navigate to: <https://halfmonty.github.io/StringArtGenerator/>
-
-![](test2.gif)

@@ -420,13 +420,17 @@ input[type="range"] {
     font-size: 14px;
 }
 
-.img-zoomable-container {
-    position: relative;
-    margin: 20px auto;
+.img-scale-wrapper {
+    margin: 0 auto;
     overflow: hidden;
-    cursor: grab;
     border: 1px solid #ddd;
     border-radius: 8px;
+}
+
+.img-zoomable-container {
+    position: relative;
+    overflow: hidden;
+    cursor: grab;
 }
 
 .img-zoomable-content {
