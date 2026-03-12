@@ -226,54 +226,52 @@ function displayImageWithZoom(img) {
     // Store original image for cropping
     originalImage = img;
 
-    // Get target size from input
+    // Get target size from input (used only for cropping, not display)
     const targetSize =
         parseInt(document.getElementById("targetSize").value) || 1000;
 
-    // Calculate CSS scale to fit viewport while keeping all coords at targetSize
+    // Display size always fills the panel, independent of targetSize
     const availableWidth = Math.max(originalTab.clientWidth - 40, 200);
     const availableHeight = Math.max(originalTab.clientHeight - 80, 200);
-    const maxDisplaySize = Math.min(availableWidth, availableHeight);
-    const cssScale = Math.min(1, maxDisplaySize / targetSize);
+    const displaySize = Math.min(availableWidth, availableHeight);
 
-    // Create a scaling wrapper to fit large canvases into the viewport
+    // Create a scaling wrapper at the full display size
     const scaleWrapper = document.createElement("div");
     scaleWrapper.className = "img-scale-wrapper";
-    scaleWrapper.style.width = `${targetSize * cssScale}px`;
-    scaleWrapper.style.height = `${targetSize * cssScale}px`;
+    scaleWrapper.style.width = `${displaySize}px`;
+    scaleWrapper.style.height = `${displaySize}px`;
 
-    // Create zoomable container at full targetSize, CSS-scaled to fit
+    // Create zoomable container at display size (no CSS scaling needed)
     const zoomableContainer = document.createElement("div");
     zoomableContainer.className = "img-zoomable-container";
-    zoomableContainer.style.width = targetSize + "px";
-    zoomableContainer.style.height = targetSize + "px";
-    zoomableContainer.style.transform = `scale(${cssScale})`;
-    zoomableContainer.style.transformOrigin = "top left";
+    zoomableContainer.style.width = displaySize + "px";
+    zoomableContainer.style.height = displaySize + "px";
 
     // Create content wrapper
     const zoomableContent = document.createElement("div");
     zoomableContent.className = "img-zoomable-content";
 
-    // Calculate scale to fit image in square (this becomes our base scale)
-    const baseScale = Math.min(targetSize / img.width, targetSize / img.height);
+    // Calculate scale to fit image in display square
+    const baseScale = Math.min(displaySize / img.width, displaySize / img.height);
     const baseScaledWidth = img.width * baseScale;
     const baseScaledHeight = img.height * baseScale;
 
-    // Calculate minimum zoom to fill entire targetSize (both dimensions)
-    const minZoomToFillWidth = targetSize / baseScaledWidth;
-    const minZoomToFillHeight = targetSize / baseScaledHeight;
+    // Calculate minimum zoom to fill entire display (both dimensions)
+    const minZoomToFillWidth = displaySize / baseScaledWidth;
+    const minZoomToFillHeight = displaySize / baseScaledHeight;
     const minZoomLevel = Math.max(minZoomToFillWidth, minZoomToFillHeight);
 
     // Set initial zoom to minimum required
     imgZoomLevel = minZoomLevel;
 
     // Center the image
-    const offsetX = (targetSize - baseScaledWidth) / 2;
-    const offsetY = (targetSize - baseScaledHeight) / 2;
+    const offsetX = (displaySize - baseScaledWidth) / 2;
+    const offsetY = (displaySize - baseScaledHeight) / 2;
 
-    // Store display info for cropping
+    // Store display info for rendering and cropping
     imageDisplayInfo = {
         targetSize,
+        displaySize,
         baseScale,
         baseScaledWidth,
         baseScaledHeight,
@@ -282,28 +280,28 @@ function displayImageWithZoom(img) {
         minZoomLevel,
     };
 
-    // Create canvas for the image
+    // Create canvas at display size for sharp rendering
     const canvas = document.createElement("canvas");
-    canvas.width = targetSize;
-    canvas.height = targetSize;
-    canvas.style.width = targetSize + "px";
-    canvas.style.height = targetSize + "px";
+    canvas.width = displaySize;
+    canvas.height = displaySize;
+    canvas.style.width = displaySize + "px";
+    canvas.style.height = displaySize + "px";
 
     const ctx = canvas.getContext("2d");
     ctx.fillStyle = "white";
-    ctx.fillRect(0, 0, targetSize, targetSize);
+    ctx.fillRect(0, 0, displaySize, displaySize);
 
     // Apply zoom transformation and draw image
     ctx.save();
-    ctx.translate(targetSize / 2, targetSize / 2);
+    ctx.translate(displaySize / 2, displaySize / 2);
     ctx.translate(imgPanX, imgPanY);
     ctx.scale(imgZoomLevel, imgZoomLevel);
-    ctx.translate(-targetSize / 2, -targetSize / 2);
+    ctx.translate(-displaySize / 2, -displaySize / 2);
     ctx.drawImage(img, offsetX, offsetY, baseScaledWidth, baseScaledHeight);
     ctx.restore();
 
     // Add circular lightbox effect
-    addCircularLightboxEffect(ctx, targetSize);
+    addCircularLightboxEffect(ctx, displaySize);
 
     zoomableContent.appendChild(canvas);
     zoomableContent.dataset.originalImg = img.src;
@@ -325,7 +323,13 @@ function displayImageWithZoom(img) {
     zoomInfo.id = "imgZoomInfo";
     zoomInfo.textContent = "Zoom: 100% | Cmd+Scroll to zoom, Drag to pan";
 
+    // Add crosshairs overlay for centering
+    const crosshairs = document.createElement("div");
+    crosshairs.className = "img-crosshairs";
+    crosshairs.innerHTML = '<div class="img-crosshairs-h"></div><div class="img-crosshairs-v"></div>';
+
     zoomableContainer.appendChild(zoomableContent);
+    zoomableContainer.appendChild(crosshairs);
     scaleWrapper.appendChild(zoomableContainer);
     originalTab.appendChild(scaleWrapper);
 
@@ -339,7 +343,7 @@ function displayImageWithZoom(img) {
         zoomableContent,
         canvas,
         img,
-        targetSize,
+        displaySize,
     );
 
     // Reset pan when switching tabs or regenerating (zoom is already set to minimum)
@@ -1435,7 +1439,7 @@ function adjustImgZoomAt(delta, mouseX, mouseY, redrawCallback) {
 // Reset image zoom and pan
 // biome-ignore lint/correctness/noUnusedVariables: called from html
 function resetImgZoom() {
-    // Reset to minimum zoom level (fills targetSize dimensions)
+    // Reset to minimum zoom level (fills display dimensions)
     imgZoomLevel = imageDisplayInfo ? imageDisplayInfo.minZoomLevel : 1;
     imgPanX = 0;
     imgPanY = 0;
@@ -1451,7 +1455,7 @@ function resetImgZoom() {
 function updateImageCanvas() {
     if (!originalImage) return;
 
-    // Rebuild the entire image display with new targetSize and CSS scale
+    // Rebuild the entire image display
     displayImageWithZoom(originalImage);
 }
 
@@ -1530,8 +1534,19 @@ function getCroppedImageDataForWebGPU() {
         throw new Error("No original image or display info available");
     }
 
-    const { targetSize, baseScaledWidth, baseScaledHeight, offsetX, offsetY } =
-        imageDisplayInfo;
+    const { targetSize, displaySize } = imageDisplayInfo;
+
+    // Recompute base scale and offsets in targetSize coordinates
+    const baseScale = Math.min(targetSize / originalImage.width, targetSize / originalImage.height);
+    const baseScaledWidth = originalImage.width * baseScale;
+    const baseScaledHeight = originalImage.height * baseScale;
+    const offsetX = (targetSize - baseScaledWidth) / 2;
+    const offsetY = (targetSize - baseScaledHeight) / 2;
+
+    // Convert pan from displaySize coords to targetSize coords
+    const coordScale = targetSize / displaySize;
+    const panXTarget = imgPanX * coordScale;
+    const panYTarget = imgPanY * coordScale;
 
     // Create a temporary canvas to extract the visible portion
     const tempCanvas = document.createElement("canvas");
@@ -1545,14 +1560,14 @@ function getCroppedImageDataForWebGPU() {
     tempCtx.fillStyle = "white";
     tempCtx.fillRect(0, 0, targetSize, targetSize);
 
-    // Apply the same transformations as the display
+    // Apply the same transformations as the display, but in targetSize coords
     tempCtx.save();
     tempCtx.translate(targetSize / 2, targetSize / 2);
-    tempCtx.translate(imgPanX, imgPanY);
+    tempCtx.translate(panXTarget, panYTarget);
     tempCtx.scale(imgZoomLevel, imgZoomLevel);
     tempCtx.translate(-targetSize / 2, -targetSize / 2);
 
-    // Draw the image with the same scaling and positioning as display
+    // Draw the image with targetSize-based scaling
     tempCtx.drawImage(
         originalImage,
         offsetX,
