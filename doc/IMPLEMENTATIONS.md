@@ -49,9 +49,8 @@ All versions implement the same greedy algorithm:
 
 - **Files**: `string-art-python/string_art.py`, `string-art-python/main.py`
 - **Runtime**: CLI (`uv run string_art.py --input image.jpg`)
-- **Details**: NumPy for data handling, Numba `@jit(nopython=True)` for hot loops (line error evaluation, error buffer updates, main greedy loop). Uses Bresenham's algorithm for line rasterization and **aggdraw** for anti-aliased output rendering — the only implementation producing smooth, anti-aliased results.
+- **Details**: NumPy for data handling, Numba `@jit(nopython=True)` for hot loops (line error evaluation, error buffer updates, main greedy loop). Uses Bresenham's algorithm for line rasterization and **aggdraw** for anti-aliased output rendering.
 - **Speed**: ~0.5-1x vs Go (after JIT warmup)
-- **Tradeoff**: Slower execution but highest output quality (anti-aliased lines) and fastest development iteration.
 
 ### 5. WebAssembly (C compiled to WASM)
 
@@ -122,9 +121,8 @@ The C/SIMD version compiled to WASM was the fastest browser option initially. Th
 
 ### Output Quality
 
-- The Python/aggdraw implementation was the only one producing anti-aliased output. All other implementations use hard-edged line drawing.
-- Output line opacity (separate from algorithm weight) significantly affects visual quality and is worth tuning independently.
+- Output line opacity (separate from algorithm weight) is a manual adjustment used to simulate the real-life appearance of different size threads.
 
 ## Final Architecture
 
-The final version is a pure WebGPU browser application in ``, with no WASM dependency. It supports both static image and webcam input with real-time processing.
+The final version is a pure WebGPU browser application with no WASM dependency. It supports both static image and webcam input with real-time processing.

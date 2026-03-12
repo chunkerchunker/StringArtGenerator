@@ -4,26 +4,27 @@
 import { generateLineCache } from './lineCache.js';
 import { convertToLuminosity, createErrorBuffer } from './preprocessing.js';
 
+let gpuDevice = null;
+let gpuPipeline = null;
 let gpuContext = null;
 let lineCache = null;
 let currentConfig = null;
 let processingLock = null; // Mutex to prevent concurrent processImage calls
 
-export async function initWebGPU(config) {
-    console.log('Initializing WebGPU processor...', config);
+// Ensure the GPU device and pipeline exist (created once, reused forever)
+async function ensureDeviceAndPipeline() {
+    if (gpuDevice && gpuPipeline) return;
 
-    // Check WebGPU support
     if (!navigator.gpu) {
         throw new Error('WebGPU not supported in this browser');
     }
 
-    // Request adapter and device
     const adapter = await navigator.gpu.requestAdapter();
     if (!adapter) {
         throw new Error('Failed to get WebGPU adapter');
     }
 
-    const device = await adapter.requestDevice({
+    gpuDevice = await adapter.requestDevice({
         requiredLimits: {
             maxComputeWorkgroupSizeX: Math.min(1024, adapter.limits.maxComputeWorkgroupSizeX),
             maxComputeWorkgroupSizeY: Math.min(1024, adapter.limits.maxComputeWorkgroupSizeY),
@@ -33,18 +34,15 @@ export async function initWebGPU(config) {
         }
     });
 
-    // Load shader
     const shaderResponse = await fetch('shader.wgsl');
     const shaderCode = await shaderResponse.text();
 
-    // Create shader module
-    const shaderModule = device.createShaderModule({
+    const shaderModule = gpuDevice.createShaderModule({
         code: shaderCode,
         label: 'String Art Compute Shader'
     });
 
-    // Create compute pipeline
-    const pipeline = device.createComputePipeline({
+    gpuPipeline = gpuDevice.createComputePipeline({
         layout: 'auto',
         compute: {
             module: shaderModule,
@@ -52,67 +50,95 @@ export async function initWebGPU(config) {
         },
         label: 'String Art Pipeline'
     });
+}
+
+// Reuse a buffer if it's large enough, otherwise destroy and create a new one
+function ensureBuffer(device, existing, requiredSize, usage, label) {
+    if (existing && existing.size >= requiredSize) {
+        return existing;
+    }
+    if (existing) {
+        existing.destroy();
+    }
+    return device.createBuffer({ size: requiredSize, usage, label });
+}
+
+export async function initWebGPU(config) {
+    console.log('Initializing WebGPU processor...', config);
+
+    await ensureDeviceAndPipeline();
+    const device = gpuDevice;
 
     // Generate line cache if config changed
-    const configChanged = !currentConfig ||
+    const cacheChanged = !currentConfig ||
         currentConfig.imgSize !== config.imgSize ||
         currentConfig.pins !== config.pins ||
         currentConfig.minDistance !== config.minDistance;
 
-    if (configChanged) {
+    if (cacheChanged) {
         console.log('Generating line cache...');
         lineCache = generateLineCache(config.imgSize, config.pins, config.minDistance);
         currentConfig = { ...config };
     }
 
-    // Create GPU buffers
-    const errorBuffer = device.createBuffer({
-        size: config.imgSize * config.imgSize * 4,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        label: 'Error Buffer'
-    });
+    // Reuse existing buffers when they're large enough
+    const prev = gpuContext?.buffers;
 
-    const lineCoordBuffer = device.createBuffer({
-        size: lineCache.lineCoordBuffer.byteLength,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        label: 'Line Coord Buffer'
-    });
+    const errorBuffer = ensureBuffer(
+        device, prev?.errorBuffer,
+        config.imgSize * config.imgSize * 4,
+        GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        'Error Buffer'
+    );
 
-    const lineMetadataBuffer = device.createBuffer({
-        size: lineCache.lineMetadataBuffer.byteLength,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        label: 'Line Metadata Buffer'
-    });
+    const lineCoordBuffer = ensureBuffer(
+        device, prev?.lineCoordBuffer,
+        lineCache.lineCoordBuffer.byteLength,
+        GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        'Line Coord Buffer'
+    );
 
-    const lineSequenceBuffer = device.createBuffer({
-        size: (config.maxLines + 1) * 4,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
-        label: 'Line Sequence Buffer'
-    });
+    const lineMetadataBuffer = ensureBuffer(
+        device, prev?.lineMetadataBuffer,
+        lineCache.lineMetadataBuffer.byteLength,
+        GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        'Line Metadata Buffer'
+    );
 
-    const stateBuffer = device.createBuffer({
-        size: 16,
-        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
-        label: 'State Buffer'
-    });
+    const lineSequenceBuffer = ensureBuffer(
+        device, prev?.lineSequenceBuffer,
+        (config.maxLines + 1) * 4,
+        GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST,
+        'Line Sequence Buffer'
+    );
 
-    const configBuffer = device.createBuffer({
-        size: 32,
-        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-        label: 'Config Buffer'
-    });
+    const stateBuffer = ensureBuffer(
+        device, prev?.stateBuffer,
+        16,
+        GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+        'State Buffer'
+    );
 
-    const readbackBuffer = device.createBuffer({
-        size: (config.maxLines + 1) * 4,
-        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-        label: 'Readback Buffer'
-    });
+    const configBuffer = ensureBuffer(
+        device, prev?.configBuffer,
+        32,
+        GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        'Config Buffer'
+    );
 
-    const stateReadbackBuffer = device.createBuffer({
-        size: 16,
-        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
-        label: 'State Readback Buffer'
-    });
+    const readbackBuffer = ensureBuffer(
+        device, prev?.readbackBuffer,
+        (config.maxLines + 1) * 4,
+        GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+        'Readback Buffer'
+    );
+
+    const stateReadbackBuffer = ensureBuffer(
+        device, prev?.stateReadbackBuffer,
+        16,
+        GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+        'State Readback Buffer'
+    );
 
     // Upload static data to GPU
     device.queue.writeBuffer(lineCoordBuffer, 0, lineCache.lineCoordBuffer);
@@ -142,9 +168,9 @@ export async function initWebGPU(config) {
     configDataF32[4] = config.lineWeight;
     device.queue.writeBuffer(configBuffer, 0, configData);
 
-    // Create bind group
+    // Always recreate bind group (cheap, and buffer references may have changed)
     const bindGroup = device.createBindGroup({
-        layout: pipeline.getBindGroupLayout(0),
+        layout: gpuPipeline.getBindGroupLayout(0),
         entries: [
             { binding: 0, resource: { buffer: errorBuffer } },
             { binding: 1, resource: { buffer: lineCoordBuffer } },
@@ -158,10 +184,12 @@ export async function initWebGPU(config) {
 
     gpuContext = {
         device,
-        pipeline,
+        pipeline: gpuPipeline,
         bindGroup,
         buffers: {
             errorBuffer,
+            lineCoordBuffer,
+            lineMetadataBuffer,
             lineSequenceBuffer,
             stateBuffer,
             readbackBuffer,
@@ -268,9 +296,10 @@ export async function processImage(imageData, config) {
         );
         device.queue.submit([readbackEncoder.finish()]);
 
-        // Readback line sequence
-        await buffers.readbackBuffer.mapAsync(GPUMapMode.READ);
-        const lineSequenceData = new Uint32Array(buffers.readbackBuffer.getMappedRange());
+        // Readback line sequence (only the portion used by current config)
+        const readbackBytes = (config.maxLines + 1) * 4;
+        await buffers.readbackBuffer.mapAsync(GPUMapMode.READ, 0, readbackBytes);
+        const lineSequenceData = new Uint32Array(buffers.readbackBuffer.getMappedRange(0, readbackBytes));
         const fullSequence = Array.from(lineSequenceData);
         buffers.readbackBuffer.unmap();
 
@@ -302,8 +331,17 @@ export async function processImage(imageData, config) {
 }
 
 export function cleanup() {
-    // WebGPU resources are garbage collected, but we can clear references
+    if (gpuContext) {
+        // Destroy all GPU buffers
+        for (const buf of Object.values(gpuContext.buffers)) {
+            buf.destroy();
+        }
+    }
     gpuContext = null;
+    gpuDevice = null;
+    gpuPipeline = null;
+    lineCache = null;
+    currentConfig = null;
 }
 
 export function getPinCoords() {

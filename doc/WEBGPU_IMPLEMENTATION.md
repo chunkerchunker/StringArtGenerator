@@ -31,16 +31,3 @@ Every `processImage` call must reset error buffer (re-upload), state buffer (`[0
 ### Auto Line Weight Binary Search
 
 Finds the **highest** weight where `lineCount >= targetMaxLines` (range 1-200, ~8 iterations). Higher weight = more per-line impact = fewer lines needed.
-
-## Known Limitations
-
-1. **GPU timeout**: Very large settings (>10000 lines, >500 pins) may timeout on some GPUs
-2. **Memory**: Each context uses ~50MB GPU memory
-3. **Single-threaded**: Mutex ensures only one generation at a time (prevents errors but serializes requests)
-
-## Future Optimizations
-
-1. **Reuse buffers across reinitializations** when only size increases
-2. **Async shader compilation** for faster startup
-3. **Multiple readback buffers** to allow pipelined processing
-4. **Shared line cache** across multiple contexts with same settings
