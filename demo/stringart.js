@@ -1086,7 +1086,7 @@ function setupZoomAndPan(container, content) {
                 updateTransform(content);
             }
         },
-        { signal },
+        { passive: false, signal },
     );
 
     // Mouse drag for panning
@@ -1267,7 +1267,7 @@ function setupImageZoomAndPan(container, _content, canvas, img, targetSize) {
                 redrawImage();
             }
         },
-        { signal },
+        { passive: false, signal },
     );
 
     // Mouse drag for panning
