@@ -91,7 +91,7 @@ export async function initWebGPU(config) {
     });
 
     const stateBuffer = device.createBuffer({
-        size: 8,
+        size: 16,
         usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
         label: 'State Buffer'
     });
@@ -108,12 +108,18 @@ export async function initWebGPU(config) {
         label: 'Readback Buffer'
     });
 
+    const stateReadbackBuffer = device.createBuffer({
+        size: 16,
+        usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST,
+        label: 'State Readback Buffer'
+    });
+
     // Upload static data to GPU
     device.queue.writeBuffer(lineCoordBuffer, 0, lineCache.lineCoordBuffer);
     device.queue.writeBuffer(lineMetadataBuffer, 0, lineCache.lineMetadataBuffer);
 
     // Initialize state buffer
-    const initialState = new Uint32Array([0, 0]);
+    const initialState = new Uint32Array([0, 0, 0, 0]);
     device.queue.writeBuffer(stateBuffer, 0, initialState);
 
     // Initialize line sequence with pin 0
@@ -159,6 +165,7 @@ export async function initWebGPU(config) {
             lineSequenceBuffer,
             stateBuffer,
             readbackBuffer,
+            stateReadbackBuffer,
             configBuffer
         },
         config
@@ -224,8 +231,16 @@ export async function processImage(imageData, config) {
         device.queue.writeBuffer(buffers.errorBuffer, 0, errorArray);
 
         // Reset state buffer
-        const initialState = new Uint32Array([0, 0]);
+        const initialState = new Uint32Array([0, 0, 0, 0]);
         device.queue.writeBuffer(buffers.stateBuffer, 0, initialState);
+
+        // Reset line sequence buffer with sentinel value (0xFFFFFFFF) so that
+        // pin 0 is distinguishable from "not written"
+        const SENTINEL = 0xFFFFFFFF;
+        const emptyLineSeq = new Uint32Array(config.maxLines + 1);
+        emptyLineSeq.fill(SENTINEL);
+        emptyLineSeq[0] = 0; // Start at pin 0
+        device.queue.writeBuffer(buffers.lineSequenceBuffer, 0, emptyLineSeq);
 
         // Submit batched iterations
         const numDispatches = Math.ceil(config.maxLines / (config.iterationsPerDispatch || 100));
@@ -239,24 +254,44 @@ export async function processImage(imageData, config) {
             device.queue.submit([commandEncoder.finish()]);
         }
 
-        // Copy result to readback buffer
+        // Copy results to readback buffers
         const readbackEncoder = device.createCommandEncoder();
         readbackEncoder.copyBufferToBuffer(
             buffers.lineSequenceBuffer, 0,
             buffers.readbackBuffer, 0,
             (config.maxLines + 1) * 4
         );
+        readbackEncoder.copyBufferToBuffer(
+            buffers.stateBuffer, 0,
+            buffers.stateReadbackBuffer, 0,
+            16
+        );
         device.queue.submit([readbackEncoder.finish()]);
 
         // Readback line sequence
         await buffers.readbackBuffer.mapAsync(GPUMapMode.READ);
         const lineSequenceData = new Uint32Array(buffers.readbackBuffer.getMappedRange());
-        const lineSequence = Array.from(lineSequenceData);
+        const fullSequence = Array.from(lineSequenceData);
         buffers.readbackBuffer.unmap();
+
+        // Determine actual line count from buffer data.
+        // The buffer is filled with sentinel (0xFFFFFFFF) before each run.
+        // The shader writes valid pin indices sequentially starting at index 1.
+        // Find the first sentinel to determine where real data ends.
+        const SENTINEL_READ = 0xFFFFFFFF;
+        let actualLineCount = fullSequence.length - 1; // default: assume all used
+        for (let i = 1; i < fullSequence.length; i++) {
+            if (fullSequence[i] === SENTINEL_READ) {
+                actualLineCount = i - 1;
+                break;
+            }
+        }
+
+        const lineSequence = fullSequence.slice(0, actualLineCount + 1);
 
         return {
             lineSequence,
-            lineCount: lineSequence.length,
+            lineCount: actualLineCount,
             pinCoords: lineCache.pinCoords
         };
     } finally {

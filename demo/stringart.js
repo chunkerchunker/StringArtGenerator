@@ -457,15 +457,17 @@ async function generateWithAutoLineWeight() {
 
         // Binary search parameters
         // Lower weight = more lines, Higher weight = fewer lines
-        // We want to find the minimum weight that produces <= targetMaxLines
+        // Goal: find the highest weight where the algorithm still produces
+        // exactly targetMaxLines lines (i.e. the line budget is fully used).
+        // This maximizes per-line impact while filling the budget.
         let low = 1;
         let high = 200;
-        let bestWeight = 20;
+        let bestWeight = 1;
         let iteration = 0;
         const maxIterations = 10;
 
         console.log(
-            `Starting binary search for target ${targetMaxLines} lines (lower weight = more lines)`,
+            `Starting binary search for target ${targetMaxLines} lines (higher weight = fewer lines)`,
         );
 
         while (low <= high && iteration < maxIterations && !isAutoCancelled) {
@@ -505,23 +507,16 @@ async function generateWithAutoLineWeight() {
                 updateOutputDisplay();
             }
 
-            // Update binary search bounds (lower weight = more lines)
-            if (lineCount <= targetMaxLines) {
-                // This weight produces acceptable line count, can we go lower (more lines)?
+            if (lineCount >= targetMaxLines) {
+                // Budget fully used at this weight — try higher weight
                 bestWeight = mid;
-
-                if (lineCount === targetMaxLines) {
-                    // Perfect match found
-                    console.log(`Perfect match found: weight ${mid}`);
-                    break;
-                }
-
-                // Try lower weight to get closer to target (more lines)
-                high = mid - 1;
-            } else {
-                // Too many lines, increase weight to reduce line count
                 low = mid + 1;
+            } else {
+                // Too few lines — weight is too high, go lower
+                high = mid - 1;
             }
+
+            console.log(`  bounds: low=${low}, high=${high}, bestWeight=${bestWeight}`);
         }
 
         // Check if cancelled before final generation
@@ -971,7 +966,7 @@ function updateOutputDisplay() {
     // Add line count message
     const lineCountMsg = document.createElement("div");
     lineCountMsg.className = "line-count-msg";
-    lineCountMsg.textContent = `${currentLineCount - 1} lines`;
+    lineCountMsg.textContent = `${currentLineCount} lines`;
     downloadSection.appendChild(lineCountMsg);
 
     const downloadBtn = document.createElement("button");
