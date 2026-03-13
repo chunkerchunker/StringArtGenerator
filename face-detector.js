@@ -12,6 +12,11 @@ let initPromise = null;
 const SMOOTHING = 0.3;
 let smooth = null; // { centerX, centerY, roll, size }
 
+// User transform adjustments (pan/zoom overlay, controlled from result pane UI)
+let userPanX = 0;
+let userPanY = 0;
+let userZoom = 1.0;
+
 /**
  * Initialize the face landmarker. Called automatically on first use.
  * Loads ~10MB of WASM + model from CDN.
@@ -43,11 +48,19 @@ export async function init() {
 }
 
 /**
- * Reset smoothing state (e.g. when switching from webcam to static image).
+ * Reset smoothing and user transform state (e.g. when switching from webcam to static image).
  */
 export function resetSmoothing() {
     smooth = null;
+    userPanX = 0;
+    userPanY = 0;
+    userZoom = 1.0;
 }
+
+export function adjustUserPan(dx, dy) { userPanX += dx; userPanY += dy; }
+export function adjustUserZoom(delta) { userZoom = Math.max(0.2, Math.min(5, userZoom + delta)); }
+export function resetUserTransform() { userPanX = 0; userPanY = 0; userZoom = 1.0; }
+export function getUserZoom() { return userZoom; }
 
 /**
  * Detect the largest face, align it vertically (undo roll), and crop to a square.
@@ -138,8 +151,9 @@ export async function detectAndCrop(source, outputSize, options = {}) {
     ctx.fillRect(0, 0, outputSize, outputSize);
 
     // Transform: center output on face, rotate to align, scale to fit
-    const scale = outputSize / faceSize;
-    ctx.translate(outputSize / 2, outputSize / 2);
+    // User pan/zoom is applied on top (in output pixel space)
+    const scale = (outputSize / faceSize) * userZoom;
+    ctx.translate(outputSize / 2 + userPanX, outputSize / 2 + userPanY);
     ctx.rotate(-roll);
     ctx.scale(scale, scale);
     ctx.translate(-centerX, -centerY);

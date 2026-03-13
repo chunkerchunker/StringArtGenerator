@@ -139,6 +139,49 @@ document.addEventListener("DOMContentLoaded", () => {
         scheduleAutoRegeneration();
     });
 
+    // Persistent face-crop pan/zoom listeners on resultTab.
+    // These survive DOM rebuilds inside resultTab (which happen every webcam frame).
+    // They only act when webcam + face crop mode is active.
+    const resultTabEl = document.getElementById("resultTab");
+    let fcDragging = false;
+    let fcStartX = 0;
+    let fcStartY = 0;
+
+    resultTabEl.addEventListener("wheel", async (e) => {
+        if (!webcamMode || !document.getElementById("cropToFace")?.checked) return;
+        e.preventDefault();
+        const FaceDetector = await import("./face-detector.js");
+        if (e.ctrlKey || e.metaKey) {
+            const delta = e.deltaY > 0 ? -0.1 : 0.1;
+            FaceDetector.adjustUserZoom(delta);
+        } else {
+            FaceDetector.adjustUserPan(-e.deltaX * 2, -e.deltaY * 2);
+        }
+    }, { passive: false });
+
+    resultTabEl.addEventListener("mousedown", (e) => {
+        if (!webcamMode || !document.getElementById("cropToFace")?.checked) return;
+        // Only start drag on the canvas itself, not on buttons/controls
+        if (!e.target.closest("#stringArtCanvas")) return;
+        fcDragging = true;
+        fcStartX = e.clientX;
+        fcStartY = e.clientY;
+    });
+
+    document.addEventListener("mousemove", async (e) => {
+        if (!fcDragging) return;
+        const dx = e.clientX - fcStartX;
+        const dy = e.clientY - fcStartY;
+        fcStartX = e.clientX;
+        fcStartY = e.clientY;
+        const FaceDetector = await import("./face-detector.js");
+        FaceDetector.adjustUserPan(dx, dy);
+    });
+
+    document.addEventListener("mouseup", () => {
+        fcDragging = false;
+    });
+
     // Initialize WebGPU
     initializeWebGPU();
 
@@ -199,6 +242,16 @@ window.resetImgZoom = resetImgZoom;
 window.toggleInputMode = toggleInputMode;
 window.startWebcam = startWebcam;
 window.stopWebcam = stopWebcam;
+
+// Face crop zoom/pan controls (called from result pane buttons)
+window.adjustFaceCropZoom = async (delta) => {
+    const FaceDetector = await import("./face-detector.js");
+    FaceDetector.adjustUserZoom(delta);
+};
+window.resetFaceCropTransform = async () => {
+    const FaceDetector = await import("./face-detector.js");
+    FaceDetector.resetUserTransform();
+};
 
 document.getElementById("imageInput").addEventListener("change", (e) => {
     const file = e.target.files[0];
@@ -947,25 +1000,27 @@ function updateOutputDisplay() {
 
     zoomableContent.appendChild(canvas);
 
-    // Add zoom controls (only if not in webcam mode)
-    if (!webcamMode) {
+    // Add zoom controls (static mode, or webcam+facecrop mode)
+    const faceCropActive = webcamMode && document.getElementById("cropToFace")?.checked;
+    if (!webcamMode || faceCropActive) {
         const zoomControls = document.createElement("div");
         zoomControls.className = "zoom-controls";
-        zoomControls.innerHTML = `
-            <button class="zoom-btn" onclick="adjustZoom(0.2)">+</button>
-            <button class="zoom-btn" onclick="adjustZoom(-0.2)">−</button>
-            <button class="zoom-btn" onclick="resetZoom()">Reset</button>
-        `;
+        if (faceCropActive) {
+            // Use onmousedown instead of onclick because the DOM is rebuilt every
+            // webcam frame — a slow click's mouseup lands on a different element.
+            zoomControls.innerHTML = `
+                <button class="zoom-btn" onmousedown="adjustFaceCropZoom(0.2)">+</button>
+                <button class="zoom-btn" onmousedown="adjustFaceCropZoom(-0.2)">\u2212</button>
+                <button class="zoom-btn" onmousedown="resetFaceCropTransform()">Reset</button>
+            `;
+        } else {
+            zoomControls.innerHTML = `
+                <button class="zoom-btn" onclick="adjustZoom(0.2)">+</button>
+                <button class="zoom-btn" onclick="adjustZoom(-0.2)">\u2212</button>
+                <button class="zoom-btn" onclick="resetZoom()">Reset</button>
+            `;
+        }
         zoomableContainer.appendChild(zoomControls);
-    }
-
-    // Add zoom info (only if not in webcam mode)
-    if (!webcamMode) {
-        const zoomInfo = document.createElement("div");
-        zoomInfo.className = "zoom-info";
-        zoomInfo.id = "zoomInfo";
-        zoomInfo.textContent = "Zoom: 100% | Cmd+Scroll to zoom, Drag to pan";
-        zoomableContainer.appendChild(zoomInfo);
     }
 
     // Add FPS indicator (only in webcam mode)
@@ -975,6 +1030,23 @@ function updateOutputDisplay() {
         fpsIndicator.id = "fpsIndicator";
         fpsIndicator.textContent = "FPS: --";
         zoomableContainer.appendChild(fpsIndicator);
+    }
+
+    // Add zoom info (static mode, or webcam+facecrop mode)
+    if (!webcamMode || faceCropActive) {
+        const zoomInfo = document.createElement("div");
+        zoomInfo.className = "zoom-info";
+        zoomInfo.id = "zoomInfo";
+        // When FPS indicator is also showing, offset upward to avoid overlap
+        if (faceCropActive) {
+            zoomInfo.style.bottom = "55px";
+            import("./face-detector.js").then(m => {
+                zoomInfo.textContent = `Face crop zoom: ${Math.round(m.getUserZoom() * 100)}% | Cmd+Scroll to zoom, Drag to pan`;
+            });
+        } else {
+            zoomInfo.textContent = "Zoom: 100% | Cmd+Scroll to zoom, Drag to pan";
+        }
+        zoomableContainer.appendChild(zoomInfo);
     }
 
     zoomableContainer.appendChild(zoomableContent);
