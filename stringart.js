@@ -133,6 +133,12 @@ document.addEventListener("DOMContentLoaded", () => {
         }
     });
 
+    // Setup crop-to-face checkbox
+    const cropToFaceCheckbox = document.getElementById("cropToFace");
+    cropToFaceCheckbox.addEventListener("change", () => {
+        scheduleAutoRegeneration();
+    });
+
     // Initialize WebGPU
     initializeWebGPU();
 
@@ -435,6 +441,7 @@ async function generateWithAutoLineWeight() {
         "autoLineWeight",
         "autoRegenerate",
         "imageInput",
+        "cropToFace",
     ];
     controls.forEach((id) => {
         const element = document.getElementById(id);
@@ -589,6 +596,7 @@ async function generateWithAutoLineWeight() {
             "autoRegenerate",
             "imageInput",
             "autoLineWeight",
+            "cropToFace",
         ];
         controls.forEach((id) => {
             const element = document.getElementById(id);
@@ -762,6 +770,18 @@ async function generateStringArt() {
 }
 
 async function loadImageData(file) {
+    // Face crop: detect face in original source, align, and crop
+    if (document.getElementById("cropToFace")?.checked) {
+        const source = originalImage || lastWebcamFrame;
+        if (source) {
+            const targetSize = parseInt(document.getElementById("targetSize").value);
+            const FaceDetector = await import("./face-detector.js");
+            const cropped = await FaceDetector.detectAndCrop(source, targetSize);
+            if (cropped) return cropped;
+            // No face found — fall through to existing logic
+        }
+    }
+
     return new Promise((resolve, reject) => {
         // If we have an original image and display info, use the cropped version
         if (originalImage && imageDisplayInfo) {
@@ -1858,6 +1878,9 @@ async function startWebcam() {
 
 // biome-ignore lint/correctness/noUnusedVariables: called from html
 function stopWebcam() {
+    // Reset face detection smoothing so it snaps fresh on next start
+    import("./face-detector.js").then(m => m.resetSmoothing()).catch(() => {});
+
     const video = document.getElementById("webcamVideo");
     const startBtn = document.getElementById("startWebcamBtn");
     const stopBtn = document.getElementById("stopWebcamBtn");
@@ -1975,24 +1998,38 @@ async function processWebcamFrame() {
     // Get target size
     const targetSize = parseInt(document.getElementById("targetSize").value);
 
-    // Set canvas to target size
-    canvas.width = targetSize;
-    canvas.height = targetSize;
+    // Only resize canvas when targetSize changes (resizing clears the canvas and causes flicker)
+    if (canvas.width !== targetSize || canvas.height !== targetSize) {
+        canvas.width = targetSize;
+        canvas.height = targetSize;
+    }
 
     const ctx = canvas.getContext("2d");
 
-    // Calculate crop to fit square
-    const size = Math.min(video.videoWidth, video.videoHeight);
-    const sx = (video.videoWidth - size) / 2;
-    const sy = (video.videoHeight - size) / 2;
-
-    // Draw cropped and scaled frame
-    ctx.fillStyle = "white";
-    ctx.fillRect(0, 0, targetSize, targetSize);
-    ctx.drawImage(video, sx, sy, size, size, 0, 0, targetSize, targetSize);
-
-    // Get image data
-    const imageData = ctx.getImageData(0, 0, targetSize, targetSize);
+    // Get frame data: face-cropped or center-cropped
+    // Use an offscreen canvas so the visible preview isn't touched until the final frame is ready
+    let imageData;
+    if (document.getElementById("cropToFace")?.checked) {
+        const FaceDetector = await import("./face-detector.js");
+        const faceCropped = await FaceDetector.detectAndCrop(video, targetSize, { smoothed: true });
+        if (faceCropped) {
+            imageData = faceCropped;
+        }
+    }
+    if (!imageData) {
+        // Default: center crop from video (draw to offscreen canvas to avoid flicker)
+        const offscreen = document.createElement("canvas");
+        offscreen.width = targetSize;
+        offscreen.height = targetSize;
+        const offCtx = offscreen.getContext("2d");
+        const size = Math.min(video.videoWidth, video.videoHeight);
+        const sx = (video.videoWidth - size) / 2;
+        const sy = (video.videoHeight - size) / 2;
+        offCtx.fillStyle = "white";
+        offCtx.fillRect(0, 0, targetSize, targetSize);
+        offCtx.drawImage(video, sx, sy, size, size, 0, 0, targetSize, targetSize);
+        imageData = offCtx.getImageData(0, 0, targetSize, targetSize);
+    }
     const data = imageData.data;
 
     // Apply contrast adjustment
