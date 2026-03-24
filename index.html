@@ -78,8 +78,8 @@
 
                 <div class="control-group">
                     <label for="maxLines">Max Lines:</label>
-                    <input type="range" id="maxLines" min="50" max="10000" value="4000" step="50">
-                    <div class="range-value" id="maxLinesValue">4000</div>
+                    <input type="range" id="maxLines" min="50" max="10000" value="2000" step="50">
+                    <div class="range-value" id="maxLinesValue">2000</div>
                 </div>
 
                 <div class="control-group">
@@ -101,9 +101,15 @@
                 </div>
 
                 <div class="control-group">
-                    <label for="renderLineWidth">Line Opacity:</label>
-                    <input type="range" id="renderLineWidth" min="1" max="60" value="3" step="1">
-                    <div class="range-value" id="renderLineWidthValue">3</div>
+                    <label for="renderOpacity">Line Opacity:</label>
+                    <input type="range" id="renderOpacity" min="1" max="100" value="100" step="1">
+                    <div class="range-value" id="renderOpacityValue">100</div>
+                </div>
+
+                <div class="control-group">
+                    <label for="renderLineWidth">Line Width:</label>
+                    <input type="range" id="renderLineWidth" min="0.5" max="5" value="1" step="0.25">
+                    <div class="range-value" id="renderLineWidthValue">1</div>
                 </div>
 
             </div>

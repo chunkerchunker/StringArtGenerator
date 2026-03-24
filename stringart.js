@@ -41,6 +41,7 @@ document.addEventListener("DOMContentLoaded", () => {
         "pins",
         "maxLines",
         "targetSize",
+        "renderOpacity",
         "renderLineWidth",
         "lineWeight",
         "minDistance",
@@ -53,14 +54,17 @@ document.addEventListener("DOMContentLoaded", () => {
         input.addEventListener("input", () => {
             display.textContent = input.value;
 
-            // Update canvas dynamically for render line width if we have generated data
-            if (currentLineSequence && id === "renderLineWidth") {
+            // Update canvas dynamically for render opacity/line width if we have generated data
+            if (currentLineSequence && (id === "renderOpacity" || id === "renderLineWidth")) {
+                const renderOpacity = parseFloat(
+                    document.getElementById("renderOpacity").value,
+                );
                 const renderLineWidth = parseFloat(
                     document.getElementById("renderLineWidth").value,
                 );
 
-                // Re-render with new line width
-                updateCanvasLineWidth(renderLineWidth);
+                // Re-render with new settings
+                updateCanvasOpacity(renderOpacity, renderLineWidth);
             }
 
             // Update image canvas when targetSize changes
@@ -263,10 +267,10 @@ document.getElementById("imageInput").addEventListener("change", (e) => {
         reader.onload = (e) => {
             const img = new Image();
             img.onload = () => {
+                // Switch to Original Image tab before rendering so layout dimensions are available
+                switchTabProgrammatically("original");
                 displayImageWithZoom(img);
                 hasInitialImage = true;
-                // Switch to Original Image tab after loading
-                switchTabProgrammatically("original");
             };
             img.src = e.target.result;
         };
@@ -489,6 +493,7 @@ async function generateWithAutoLineWeight() {
         "maxLines",
         "targetSize",
         "minDistance",
+        "renderOpacity",
         "renderLineWidth",
         "lineWeight",
         "autoLineWeight",
@@ -645,6 +650,7 @@ async function generateWithAutoLineWeight() {
             "maxLines",
             "targetSize",
             "minDistance",
+            "renderOpacity",
             "renderLineWidth",
             "autoRegenerate",
             "imageInput",
@@ -934,21 +940,22 @@ function calculatePinCoordinates(pinCount, outputSize) {
     return pinCoords;
 }
 
-// Update canvas line width efficiently without full re-render
-function updateCanvasLineWidth(lineWidth) {
+// Update canvas rendering efficiently without full re-render
+function updateCanvasOpacity(opacity, renderLineWidth) {
     const canvas = document.getElementById("stringArtCanvas");
     if (!canvas || !currentLineSequence) return false;
 
     // Use the actual canvas size (not the display size)
     const canvasSize = canvas.width;
 
-    // Re-render with new line width
+    // Re-render with new settings
     renderStringsToCanvas(
         canvas,
         currentLineSequence,
         currentPinCount,
         canvasSize,
-        lineWidth,
+        opacity,
+        renderLineWidth,
     );
 
     return true; // Successfully updated in-place
@@ -974,6 +981,9 @@ function updateOutputDisplay() {
     // Render at 2x for better quality (high DPI displays), minimum 400px
     const canvasSize = Math.max(displaySize * 2, 400);
 
+    const renderOpacity = parseFloat(
+        document.getElementById("renderOpacity").value,
+    );
     const renderLineWidth = parseFloat(
         document.getElementById("renderLineWidth").value,
     );
@@ -1091,6 +1101,7 @@ function updateOutputDisplay() {
         currentLineSequence,
         currentPinCount,
         canvasSize,
+        renderOpacity,
         renderLineWidth,
     );
 
@@ -1780,7 +1791,8 @@ function renderStringsToCanvas(
     lineSequence,
     pinCount,
     canvasSize,
-    lineWidth,
+    lineOpacity,
+    lineWidth = 1,
 ) {
     // Validate canvas size before rendering
     if (canvasSize < 100 || !Number.isFinite(canvasSize)) {
@@ -1815,14 +1827,14 @@ function renderStringsToCanvas(
     }
 
     // Draw lines with alpha blending for smooth, natural string art effect
-    // Line width parameter controls opacity (higher = darker)
+    // Opacity parameter controls line alpha (higher = darker)
     // This creates cumulative darkening where lines overlap
     // Scale opacity based on canvas size to maintain consistent appearance
-    const baseAlpha = lineWidth / 100;  // Convert slider value (3-60) to base opacity (0.03-0.6)
+    const baseAlpha = lineOpacity / 100;  // Convert slider value (3-60) to base opacity (0.03-0.6)
     const scaleFactor = canvasSize / 500;  // Scale relative to reference size (500px from webgpu)
     const alpha = baseAlpha * scaleFactor;  // Increase opacity proportionally with canvas size
     ctx.strokeStyle = `rgba(0, 0, 0, ${Math.min(alpha, 1.0)})`;  // Clamp to max 1.0
-    ctx.lineWidth = 1;
+    ctx.lineWidth = lineWidth;
 
     for (let i = 0; i < lineSequence.length - 1; i++) {
         const fromPin = lineSequence[i];
@@ -1951,7 +1963,7 @@ async function startWebcam() {
 // biome-ignore lint/correctness/noUnusedVariables: called from html
 function stopWebcam() {
     // Reset face detection smoothing so it snaps fresh on next start
-    import("./face-detector.js").then(m => m.resetSmoothing()).catch(() => {});
+    import("./face-detector.js").then(m => m.resetSmoothing()).catch(() => { });
 
     const video = document.getElementById("webcamVideo");
     const startBtn = document.getElementById("startWebcamBtn");
